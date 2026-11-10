@@ -159,6 +159,7 @@ details li{margin:2px 0}
       <span class="lbl">Speler:</span>
       <button class="btn" id="bPick" title="Toon alle spelers en klik op wie gevolgd moet worden">Kies speler<kbd>W</kbd></button>
       <button class="btn sm" id="bPickClear">Wissen</button>
+      <button class="btn sm" id="bBoxes" title="Kaders om alle spelers (Y)">Kaders<kbd>Y</kbd></button>
       <span class="cropinfo" id="pickInfo">niet gekozen</span>
     </div>
     <div class="group">
@@ -254,6 +255,7 @@ details li{margin:2px 0}
         <li><kbd>[</kbd> / <kbd>]</kbd> begin/einde van geselecteerde clip naar huidige tijd · <kbd>P</kbd> clip afspelen · <kbd>Delete</kbd> verwijderen · <kbd>Ctrl</kbd>+<kbd>Z</kbd> ongedaan</li>
         <li><b>Raakmomenten nakijken:</b> <kbd>N</kbd> volgende slag (<kbd>Shift</kbd>+<kbd>N</kbd> vorige), bijstellen met <kbd>,</kbd> <kbd>.</kbd>, vastzetten met <kbd>T</kbd></li>
         <li><kbd>W</kbd> speler kiezen: alle spelers krijgen een nummer, klik op jezelf. Geldt voor nieuwe clips, of voor de geselecteerde clip. Een uitsnede heeft voorrang.</li>
+        <li><kbd>Y</kbd> kaders om alle spelers, met een vast nummer per speler; de gekozen speler is groen</li>
         <li><kbd>K</kbd> skelet tonen · <kbd>T</kbd> raakmoment van geselecteerde clip op huidige tijd</li>
         <li>Je markers en analyses worden per videobestand in deze browser onthouden.</li>
       </ul>
@@ -628,6 +630,7 @@ document.addEventListener('keydown',e=>{
     case 'm':toggleMute();break;
     case 'k':togglePose();break;
     case 'w':togglePick();break;
+    case 'y':toggleBoxes();break;
     case 't':setContactHere();break;
     case 'n':gotoContact(e.shiftKey?-1:1);break;
     case 'p':previewClip(getClip(state.sel));break;
@@ -809,6 +812,7 @@ async function loadPose(){
       try{lm=await mod.PoseLandmarker.createFromOptions(fileset,opts('GPU'));POSE.dev='GPU'}
       catch(e){console.warn('GPU niet beschikbaar, CPU wordt gebruikt',e);lm=await mod.PoseLandmarker.createFromOptions(fileset,opts('CPU'));POSE.dev='CPU'}
       try{POSE.lmImg=await mod.PoseLandmarker.createFromOptions(fileset,Object.assign(opts(POSE.dev),{runningMode:'IMAGE',numPoses:4}))}catch(e){console.warn('multi-person model',e);POSE.lmImg=null}
+      try{POSE.det=await mod.ObjectDetector.createFromOptions(fileset,{baseOptions:{modelAssetPath:u('person_model.wasm') /* MediaPipe efficientdet_lite0.tflite, renamed for hosting */,delegate:POSE.dev},runningMode:'IMAGE',scoreThreshold:0.25,maxResults:10,categoryAllowlist:['person']})}catch(e){console.warn('person detector',e);POSE.det=null}
       POSE.lm=lm;setPoseStatus('');return lm;
     })();
   }
@@ -926,6 +930,14 @@ function renderOverlay(){
   const ctx=pcanvas.getContext('2d');ctx.clearRect(0,0,w,h);
   if(!hasVideo())return;
   for(const f of OVERLAYS)try{f(ctx,w,h,dpr)}catch(e){console.warn(e)}
+  if(BOX.on&&!state.pickMode){
+    const tg=activeTarget();let tid=-1;
+    if(tg){let bd=1.5;for(const b of BOX.list){const d=anchorDist(b.a,POSE.liveTr?POSE.liveTr.last:tg);if(d<bd){bd=d;tid=b.id}}}
+    for(const b of BOX.list){const me=b.id===tid,x=b.x0*w,y=b.y0*h,bw=(b.x1-b.x0)*w,bh=(b.y1-b.y0)*h;
+      ctx.strokeStyle=me?'#d4f53c':'rgba(125,211,252,.95)';ctx.lineWidth=(me?2.5:2)*dpr;ctx.strokeRect(x,y,bw,bh);
+      const lab=(me?'★ ':'')+'Speler '+b.id;ctx.font='600 '+(11*dpr)+'px system-ui,sans-serif';const tw=ctx.measureText(lab).width+8*dpr;
+      ctx.fillStyle=me?'#d4f53c':'rgba(125,211,252,.95)';ctx.fillRect(x,y-15*dpr,tw,15*dpr);ctx.fillStyle='#0b100d';ctx.textBaseline='middle';ctx.fillText(lab,x+4*dpr,y-7.5*dpr)}
+  }
   if(state.pickMode){
     (POSE.pickCands||[]).forEach((P,i)=>{drawSkeleton(ctx,P,p=>({x:p.x*w,y:p.y*h}),Math.max(2,2.5*dpr),12*dpr,false);
       const a=poseAnchor(P);pill(ctx,String(i+1),a.x*w,(a.y-a.h*0.62)*h,15*dpr,'#d4f53c')});
@@ -996,6 +1008,56 @@ function pickAt(p){
   if(POSE.on)poseTick();else renderOverlay();
 }
 $('#bPick').onclick=togglePick;
+/* person detector (EfficientDet-Lite0): boxes for everyone, also far away; tiles for small players */
+const pcv3=document.createElement('canvas'),pctx3=pcv3.getContext('2d');
+function detBoxesRegion(r){
+  const W=v.videoWidth,H=v.videoHeight,s=Math.min(2,640/Math.max(r.w,r.h)),cw=Math.max(16,Math.round(r.w*s)),ch=Math.max(16,Math.round(r.h*s));
+  if(pcv3.width!==cw)pcv3.width=cw;if(pcv3.height!==ch)pcv3.height=ch;pctx3.drawImage(v,r.x,r.y,r.w,r.h,0,0,cw,ch);
+  let res;try{res=POSE.det.detect(pcv3)}catch(e){console.warn(e);return[]}
+  return(res&&res.detections||[]).map(d=>{const b=d.boundingBox,sc=d.categories&&d.categories[0]?d.categories[0].score:0;
+    const x0=(r.x+b.originX/s)/W,y0=(r.y+b.originY/s)/H,x1=(r.x+(b.originX+b.width)/s)/W,y1=(r.y+(b.originY+b.height)/s)/H;
+    return{x0,y0,x1,y1,score:sc,a:{x:(x0+x1)/2,y:y0+(y1-y0)*0.55,h:Math.max(0.03,y1-y0)}}})
+    // drop boxes cut off by a tile edge (the full-frame pass or another tile sees that person whole)
+    .filter(b=>{const e=0.006,rx0=r.x/W,ry0=r.y/H,rx1=(r.x+r.w)/W,ry1=(r.y+r.h)/H;
+      return!((ry1<0.999&&b.y1>ry1-e)||(rx0>0.001&&b.x0<rx0+e)||(rx1<0.999&&b.x1>rx1-e)||(ry0>0.001&&b.y0<ry0+e))});
+}
+function iou(a,b){const ix=Math.max(0,Math.min(a.x1,b.x1)-Math.max(a.x0,b.x0)),iy=Math.max(0,Math.min(a.y1,b.y1)-Math.max(a.y0,b.y0)),i=ix*iy;
+  return i/((a.x1-a.x0)*(a.y1-a.y0)+(b.x1-b.x0)*(b.y1-b.y0)-i||1)}
+function detectPeopleBoxes(){
+  if(!POSE.det||!hasVideo())return[];const W=v.videoWidth,H=v.videoHeight;
+  let all=detBoxesRegion({x:0,y:0,w:W,h:H});
+  for(const fx of[0,0.3,0.6])all=all.concat(detBoxesRegion({x:fx*W,y:0,w:0.4*W,h:0.6*H}));
+  all.sort((a,b)=>b.score-a.score);const out=[];
+  for(const b of all){if(b.y1-b.y0<0.02)continue;if(out.every(o=>iou(o,b)<0.4&&!(b.x0>=o.x0-0.005&&b.x1<=o.x1+0.005&&b.y0>=o.y0-0.005&&b.y1<=o.y1+0.005)))out.push(b)}
+  return out;
+}
+/* player boxes: all people, stable ids by nearest match */
+const BOX={on:false,list:[],next:1,busy:false,n:0,lastT:-1};
+function personBox(P){let x0=1,x1=0,y0=1,y1=0;for(const i of KEYPTS.concat([0,29,30,31,32])){if(P[i].v<0.3)continue;x0=Math.min(x0,P[i].x);x1=Math.max(x1,P[i].x);y0=Math.min(y0,P[i].y);y1=Math.max(y1,P[i].y)}
+  const mh=(y1-y0)*0.08,mw=mh*v.videoHeight/v.videoWidth;return{x0:x0-mw*1.5,x1:x1+mw*1.5,y0:y0-mh*1.6,y1:y1+mh,a:poseAnchor(P)}}
+function boxTick(force){
+  if(!BOX.on||!(POSE.lmImg||POSE.det)||state.exporting||BOX.busy)return;
+  if(!force&&(BOX.n++%2))return;
+  BOX.busy=true;
+  try{
+    const jump=Math.abs(v.currentTime-BOX.lastT)>1;BOX.lastT=v.currentTime;
+    const nb=POSE.det?detectPeopleBoxes():detectAll(true).map(personBox),used=new Set();
+    for(const b of nb){let best=null,bd=jump?0.8:1.2;
+      for(const o of BOX.list){if(used.has(o.id))continue;const d=anchorDist(o.a,b.a);if(d<bd){bd=d;best=o}}
+      if(best){b.id=best.id;used.add(best.id)}else b.id=BOX.next++}
+    BOX.list=nb.sort((a,b)=>a.id-b.id);
+  }finally{BOX.busy=false}
+}
+function boxLoop(){if(!BOX.on)return;if('requestVideoFrameCallback' in HTMLVideoElement.prototype)v.requestVideoFrameCallback(()=>{boxTick();boxLoop()});else requestAnimationFrame(()=>{if(!v.paused)boxTick();boxLoop()})}
+v.addEventListener('seeked',()=>{if(BOX.on&&!state.exporting)setTimeout(()=>boxTick(true),40)});
+async function toggleBoxes(){
+  if(!hasVideo()){toast('Open eerst een video');return}
+  if(BOX.on){BOX.on=false;BOX.list=[];$('#bBoxes').classList.remove('on');renderOverlay();return}
+  try{await loadPose()}catch(e){toast('Model kon niet laden',5000);return}
+  if(!POSE.lmImg&&!POSE.det){toast('Spelers herkennen lukt niet in deze browser',5000);return}
+  BOX.on=true;BOX.list=[];BOX.next=1;$('#bBoxes').classList.add('on');boxLoop();boxTick(true);
+}
+$('#bBoxes').onclick=toggleBoxes;
 $('#bPickClear').onclick=()=>{if(getClip(state.sel))snapshot();setActiveTarget(null);persist();render();renderPick();renderOverlay()};
 $('#hand').addEventListener('change',()=>{if(POSE.on)poseTick();renderAna()});
 
@@ -1469,9 +1531,10 @@ async function analyzeBall(c,prog){
   for(let i=0;i<=n;i++){if(state.cancel)return false;await seek(ta+i*dt);const fp=frameFingerprint();
     if(prevFp&&fp&&fpDiff(fp,prevFp)<0.05){prog(i/n);continue}prevFp=fp;
     if(k2++%2===0){const nb=[];
-      if(POSE.lmImg)for(const P of detectAll(true))nb.push(bodyBox(P));// everyone on court, incl. far side
+      if(POSE.det)for(const b of detectPeopleBoxes()){const mx=(b.x1-b.x0)*0.08,my=(b.y1-b.y0)*0.05;nb.push({x0:b.x0-mx,x1:b.x1+mx,y0:b.y0-my,y1:b.y1+my})}// everyone on court, incl. far side
+      else if(POSE.lmImg)for(const P of detectAll(true))nb.push(bodyBox(P));
       if(tr||c.crop){const P=detectFor(c.crop,tr);if(P)nb.push(bodyBox(P))}
-      if(nb.length||!POSE.lmImg)boxes=nb}
+      if(nb.length||!(POSE.lmImg||POSE.det))boxes=nb}
     raw.push({t:v.currentTime,g:grabFrame(r,scale),boxes});
     if(raw.length>=3){const k=raw.length-2,bl=raw[k].boxes,out=b=>bl.every(bx=>b.x<bx.x0||b.x>bx.x1||b.y<bx.y0||b.y>bx.y1);
       const bb=blobsFrom(raw[k-1].g,raw[k].g,raw[k+1].g,r,scale);raw[k].c=bb.s.filter(out);raw[k].w=bb.w.filter(out)}

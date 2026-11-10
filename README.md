@@ -7,6 +7,7 @@ Tennisvideo's analyseren in je browser: slagen taggen en knippen, een skeletmode
 ## Wat het kan
 - **Knippen:** tag slagen met een sneltoets op het raakmoment (F forehand, B backhand, S service, V volley, X overig). Een heel punt knip je met I (begin), O of gewoon naar het einde gaan, en dan R. Exporteer daarna een montage, losse clips als zip, of ffmpeg-commando's.
 - **Speler kiezen (W):** alle spelers in beeld krijgen een nummer; klik op wie gevolgd moet worden.
+- **Spelerkaders (Y):** een kader met een vast nummer om iedere speler, ook aan de overkant. De gekozen speler is groen.
 - **Skelet (K)** en **slaganalyse:** kniehoek, romphelling, elleboog, indraaien, hoogtecurve, handsnelheid en afmaken. Raakmomenten loop je langs met N en zet je vast met T. De uitkomsten exporteer je als analyseblad (png) of als csv.
 - **Bal-tracking (experimenteel):** kalibreer de baan met 4 klikken en stel de punten daarna bij door ze te verslepen of met de pijltjestoetsen. Daarna geeft de app per slag het stuitpunt, de diepte, de kant, of de bal in of uit was, en de gemiddelde snelheid, plus een plattegrond van alle stuitpunten.
 
@@ -25,7 +26,8 @@ Ga daarna naar http://localhost:8000.
 | `index.html` | de app (HTML, CSS en JS in één bestand) |
 | `vision_bundle.mjs`, `wasm/` | MediaPipe Tasks Vision (bibliotheek en WebAssembly) |
 | `pose_model.wasm` | MediaPipe-model *pose_landmarker_full* (hernoemd van `.task`) |
+| `person_model.wasm` | MediaPipe-objectdetector *efficientdet_lite0* (hernoemd van `.tflite`), gebruikt voor spelerkaders |
 
 ## Licenties
-MediaPipe-bibliotheek en -model: Apache License 2.0, © Google.
+MediaPipe-bibliotheek en -modellen (pose_landmarker_full, efficientdet_lite0): Apache License 2.0, © Google.
 Metingen zijn 2D-schattingen vanuit één camerahoek en niet wetenschappelijk gevalideerd. Ze zijn bedoeld om je eigen slagen met elkaar te vergelijken.
