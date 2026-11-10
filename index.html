@@ -208,7 +208,7 @@ details li{margin:2px 0}
       <input type="checkbox" id="showCourt" checked>
     </div>
     <div class="stack">
-      <button class="btn" id="bCalib">Baan kalibreren (4 klikken)</button>
+      <div style="display:flex;gap:6px"><button class="btn" id="bCalib" style="flex:1">Baan kalibreren (4 klikken)</button><button class="btn" id="bCalEdit" style="flex:1">Punten bijstellen</button></div>
       <button class="btn pri" id="bBall">Bal volgen in clips</button>
     </div>
     <div id="calInfo" class="note"></div>
@@ -246,6 +246,7 @@ details li{margin:2px 0}
       <ul>
         <li><b>Snelste route:</b> speel af op 2×, druk op het raakmoment op <kbd>F</kbd> forehand, <kbd>B</kbd> backhand, <kbd>S</kbd> service, <kbd>V</kbd> volley of <kbd>X</kbd> overig. Er wordt een clip gemaakt van “voor” tot “na” dat moment (service krijgt 1 s extra aanloop).</li>
         <li><kbd>I</kbd> / <kbd>O</kbd> begin/einde handmatig, daarna een labeltoets</li>
+        <li><b>Heel punt:</b> <kbd>I</kbd> bij de eerste slag, ga naar het einde van het punt, druk <kbd>R</kbd>. Bal-tracking volgt dan alle ballen en stuiten in dat punt; de slaganalyse slaat punten over.</li>
         <li><kbd>Spatie</kbd> afspelen/pauze · <kbd>←</kbd><kbd>→</kbd> 1 s · <kbd>Shift</kbd>+pijl 5 s · <kbd>,</kbd><kbd>.</kbd> frame</li>
         <li><kbd>↑</kbd><kbd>↓</kbd> snelheid · <kbd>M</kbd> geluid</li>
         <li><kbd>C</kbd> uitsnede tekenen; sleep het kader om het te verplaatsen, het hoekje om te vergroten</li>
@@ -296,11 +297,12 @@ const LABELS={
   backhand:{name:'Backhand',key:'b',color:'#60a5fa'},
   service:{name:'Service',key:'s',color:'#facc15'},
   volley:{name:'Volley',key:'v',color:'#f472b6'},
-  overig:{name:'Overig',key:'x',color:'#a8a29e'}
+  overig:{name:'Overig',key:'x',color:'#a8a29e'},
+  punt:{name:'Punt',key:'r',color:'#c084fc'}
 };
 const KEY2LABEL={};for(const k in LABELS)KEY2LABEL[LABELS[k].key]=k;
 
-const state={file:null,url:null,clips:[],sel:null,pendIn:null,crop:null,target:null,court:null,pickMode:false,calMode:false,calPts:[],cropMode:false,stopAt:null,history:[],exporting:false,filter:null,cancel:false};
+const state={file:null,url:null,clips:[],sel:null,pendIn:null,crop:null,target:null,court:null,pickMode:false,calMode:false,calEdit:false,calSel:-1,calPts:[],cropMode:false,stopAt:null,history:[],exporting:false,filter:null,cancel:false};
 let downloads=null;
 
 /* ---------- helpers ---------- */
@@ -419,11 +421,13 @@ function sortClips(){state.clips.sort((a,b)=>a.t0-b.t0)}
 function numberOf(c){let n=0;for(const x of state.clips){if(x.label===c.label)n++;if(x===c)return n}return n}
 function indexOf(c){return state.clips.indexOf(c)+1}
 function clipName(c){return base()+'_'+String(indexOf(c)).padStart(2,'0')+'_'+c.label+numberOf(c)+'_'+fmtFile(c.t0)}
+function strokeClips(){return visibleClips().filter(c=>c.label!=='punt')}
 function visibleClips(){return state.filter?state.clips.filter(c=>c.label===state.filter):state.clips.slice()}
 
 function tag(label){
   if(!hasVideo()){toast('Open eerst een video');return}
   let t0,t1;const now=v.currentTime;
+  if(label==='punt'&&state.pendIn==null){toast('Voor een punt: zet het begin met I, ga naar het einde en druk op R',4500);return}
   if(state.pendIn!=null){
     t0=state.pendIn;t1=now;if(t1<t0)[t0,t1]=[t1,t0];
     if(t1-t0<0.2){toast('Clip is te kort; zet eerst het einde verder');return}
@@ -481,6 +485,7 @@ function relPt(e){const r=layer.getBoundingClientRect();return{x:clamp((e.client
 layer.addEventListener('pointerdown',e=>{
   if(!hasVideo()||state.exporting)return;
   if(state.calMode){if(window.__calClick)window.__calClick(relPt(e));e.preventDefault();return}
+  if(state.calEdit){if(window.__calEditDown&&window.__calEditDown(e,relPt(e)))e.preventDefault();return}
   if(state.pickMode){pickAt(relPt(e));e.preventDefault();return}
   const p=relPt(e),cr=activeCrop();
   if(e.target===handle&&cr)drag={mode:'resize',start:p,orig:{...cr}};
@@ -604,6 +609,10 @@ document.addEventListener('keydown',e=>{
   const tg=e.target;if(tg&&tg.matches&&tg.matches('input,select,textarea'))return;
   if(e.ctrlKey||e.metaKey){if(e.key.toLowerCase()==='z'){e.preventDefault();undo()}return}
   const k=e.key,kl=k.length===1?k.toLowerCase():k;
+  if(state.calEdit){const st=e.shiftKey?5:1;
+    if(k==='ArrowLeft'||k==='ArrowRight'||k==='ArrowUp'||k==='ArrowDown'){e.preventDefault();window.__calNudge(k==='ArrowLeft'?-st:k==='ArrowRight'?st:0,k==='ArrowUp'?-st:k==='ArrowDown'?st:0);return}
+    if(k==='Tab'){e.preventDefault();state.calSel=(state.calSel+(e.shiftKey?3:1))%4;return}
+    if(k==='Escape'||k==='Enter'){e.preventDefault();$('#bCalEdit').click();if(window.__renderBall)window.__renderBall();return}}
   if(KEY2LABEL[kl]){e.preventDefault();tag(KEY2LABEL[kl]);return}
   switch(kl){
     case ' ':e.preventDefault();togglePlay();break;
@@ -1094,7 +1103,7 @@ async function analyzeClip(c,prog){
   return true;
 }
 $('#bAnalyze').onclick=async()=>{
-  let list=visibleClips();if(!list.length){toast('Nog geen clips');return}
+  let list=strokeClips();if(!list.length){toast('Nog geen clips');return}
   const todo=list.filter(needsAna);if(todo.length)list=todo;
   try{await loadPose()}catch(e){toast('Skeletmodel kon niet laden',5000);return}
   const wasOn=POSE.on;
@@ -1118,7 +1127,7 @@ async function setContactHere(){
 }
 $('#bContact').onclick=setContactHere;
 function gotoContact(dir){
-  const list=visibleClips().filter(c=>c.ana&&!c.ana.failed&&fin(c.ana.tc));
+  const list=strokeClips().filter(c=>c.ana&&!c.ana.failed&&fin(c.ana.tc));
   if(!list.length){toast('Analyseer eerst je clips');return}
   let i=list.findIndex(c=>c.id===state.sel);
   i=i<0?(dir>0?0:list.length-1):clamp(i+dir,0,list.length-1);
@@ -1151,8 +1160,8 @@ const COLS=[
   ['Over','Hoe ver je hand voorbij het midden naar je andere schouder gaat (forehand)',a=>fmtD(a.across),'across',x=>fmtD(x)]
 ];
 function renderAna(){
-  const el=$('#anaTable');const list=visibleClips().filter(c=>c.ana&&!c.ana.failed);
-  const n=visibleClips().filter(needsAna).length;
+  const el=$('#anaTable');const list=strokeClips().filter(c=>c.ana&&!c.ana.failed);
+  const n=strokeClips().filter(needsAna).length;
   $('#bAnalyze').textContent=n?'Analyseer clips ('+n+' te gaan)':'Analyse opnieuw doen';
   $('#bAnalyze').disabled=!state.clips.length;
   $('#bSheet').disabled=$('#bCsv').disabled=!list.length;
@@ -1192,7 +1201,7 @@ function drawCurveBox(ctx,x,y,w,h,yr,curves,opts){
 function resample(pts,step){const out=[];for(let d=XMIN;d<=XMAX+1e-6;d+=step){let v_=NaN;for(let i=1;i<pts.length;i++){if(pts[i-1][0]<=d&&pts[i][0]>=d){const f=(d-pts[i-1][0])/Math.max(1e-6,pts[i][0]-pts[i-1][0]);v_=pts[i-1][1]+f*(pts[i][1]-pts[i-1][1]);break}}out.push([+d.toFixed(3),v_])}return out}
 function avgCurves(g,fn){const rs=g.map(c=>resample(fn(c.ana),0.033));if(!rs.length)return[];return rs[0].map((p,j)=>{const x=rs.map(r=>r[j][1]).filter(fin);return[p[0],x.length>=Math.max(2,g.length/2)?x.reduce((s,t)=>s+t,0)/x.length:NaN]}).filter(p=>fin(p[1]))}
 $('#bSheet').onclick=async()=>{
-  const list=visibleClips().filter(c=>c.ana&&!c.ana.failed);if(!list.length)return;
+  const list=strokeClips().filter(c=>c.ana&&!c.ana.failed);if(!list.length)return;
   if(list.some(c=>c.ana.v!==AV))toast('Sommige clips zijn met een oudere versie geanalyseerd; klik eerst op “Analyseer clips” voor alle cijfers en curves',6000);
   const r=await runExport('Analyseblad maken',async prog=>{
     const cols=Math.min(4,list.length),rows=Math.ceil(list.length/cols),TW=380,TH=360,CAP=84,CH=196,HEAD=130,GAP=12;
@@ -1257,7 +1266,7 @@ $('#bSheet').onclick=async()=>{
   if(r&&r.blob)await offerFile(r.blob,base()+'_analyse'+(state.filter?'_'+state.filter:'')+'.png');
 };
 $('#bCsv').onclick=()=>{
-  const list=visibleClips().filter(c=>c.ana&&!c.ana.failed);if(!list.length)return;
+  const list=strokeClips().filter(c=>c.ana&&!c.ana.failed);if(!list.length)return;
   const f=x=>fin(x)?(+x).toFixed(2).replace('.',','):'';
   const keys=['knee','kneeL','kneeR','kneeMin','tLow','rise','trunk','elbow','turn','tTurn','sep','stance','cH','dec1','dec2','finH','across'];
   const names=['knie_raak','knie_links','knie_rechts','diepste_knie','laagste_punt_s','omhoog_pct','romp','elleboog','draai','draai_moment_s','scheiding','stand','raakhoogte','snelheid_01s_pct','snelheid_02s_pct','eindhoogte','over_schouder'];
@@ -1285,10 +1294,11 @@ const CAL_NAMES=m=>m==='service'?['nabije servicelijn, links (snijpunt met enkel
 function renderCal(){
   const el=$('#calInfo');if(!el)return;
   if(state.calMode){el.innerHTML='<b>Klik punt '+(state.calPts.length+1)+' van 4:</b> '+CAL_NAMES($('#calMode').value)[state.calPts.length]+'. <kbd>Esc</kbd> = stoppen.';return}
-  el.textContent=state.court?'Baan gekalibreerd. Controleer of de getekende lijnen over de echte lijnen vallen; zo niet, kalibreer opnieuw.':'Nog niet gekalibreerd: zonder kalibratie geen snelheid, diepte of in/uit.';
+  el.innerHTML=state.calEdit?'<b>Punten bijstellen:</b> sleep een punt, of kies er een (klik of <kbd>Tab</kbd>) en schuif met de pijltjes. <kbd>Esc</kbd> of <kbd>Enter</kbd> = klaar.':state.court?'Baan gekalibreerd. Vallen de blauwe lijnen niet precies over de echte lijnen? Klik op “Punten bijstellen”.':'Nog niet gekalibreerd: zonder kalibratie geen snelheid, diepte of in/uit.';
+  if($('#bCalEdit'))$('#bCalEdit').disabled=!state.court;
   $('#bCalib').classList.toggle('on',state.calMode);
 }
-function startCal(){if(!hasVideo()){toast('Open eerst een video');return}v.pause();state.calMode=true;state.calPts=[];$('#wrap').classList.add('cal-mode');renderCal()}
+function startCal(){if(!hasVideo()){toast('Open eerst een video');return}if(state.calEdit)setCalEdit(false);v.pause();state.calMode=true;state.calPts=[];$('#wrap').classList.add('cal-mode');renderCal()}
 window.__calCancel=()=>{state.calMode=false;state.calPts=[];$('#wrap').classList.remove('cal-mode');renderCal()};
 window.__calClick=p=>{
   state.calPts.push({x:p.x,y:p.y});
@@ -1316,11 +1326,12 @@ OVERLAYS.push((ctx,w,h,dpr)=>{
     ctx.strokeStyle='rgba(255,255,255,.6)';seg([-HW-0.9,NET],[HW+0.9,NET]);
   }
   const c=getClip(state.sel);
-  if(c&&c.ball&&c.ball.track&&c.ball.track.length){
-    const t=v.currentTime,pts=c.ball.track.filter(q=>q[0]<=t+1e-3);
-    if(pts.length){ctx.strokeStyle='rgba(253,224,71,.9)';ctx.lineWidth=2*dpr;ctx.beginPath();pts.forEach((q,i)=>{const X=q[1]*w,Y=q[2]*h;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke();
-      const q=pts[pts.length-1];ctx.fillStyle='#fde047';ctx.beginPath();ctx.arc(q[1]*w,q[2]*h,4*dpr,0,7);ctx.fill()}
-    const b=c.ball.bounce;if(b&&b.t<=t+1e-3){ctx.strokeStyle=b.call==='uit'?'#f87171':b.call==='in'?'#4ade80':'#fbbf24';ctx.lineWidth=2.5*dpr;ctx.beginPath();ctx.arc(b.x*w,b.y*h,8*dpr,0,7);ctx.stroke()}
+  if(c&&c.ball){
+    const t=v.currentTime;
+    for(const tr of ballTracks(c.ball)){const pts=tr.filter(q=>q[0]<=t+1e-3&&q[0]>=t-(c.label==='punt'?1.2:9));if(!pts.length)continue;
+      ctx.strokeStyle='rgba(253,224,71,.9)';ctx.lineWidth=2*dpr;ctx.beginPath();pts.forEach((q,i)=>{const X=q[1]*w,Y=q[2]*h;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke();
+      const q=pts[pts.length-1];if(t-q[0]<0.15){ctx.fillStyle='#fde047';ctx.beginPath();ctx.arc(q[1]*w,q[2]*h,4*dpr,0,7);ctx.fill()}}
+    for(const b of ballBounces(c.ball)){if(b.t>t+1e-3)continue;ctx.strokeStyle=b.call==='uit'?'#f87171':b.call==='in'?'#4ade80':'#fbbf24';ctx.lineWidth=2.5*dpr;ctx.beginPath();ctx.arc(b.x*w,b.y*h,8*dpr,0,7);ctx.stroke()}
   }
 });
 
@@ -1395,9 +1406,27 @@ function findBounce(path,tc){
   if(Math.abs(bv)<2.5*med)return null;
   return path[best];
 }
+function classifyBounce(b,dt){
+  const ch=courtH();if(!ch||!ch.toCourt)return b;
+  const W=v.videoWidth,H=v.videoHeight,[X,Y]=applyH(ch.toCourt,b.x*W,b.y*H);b.X=X;b.Y=Y;
+  const far=Y>CRT.NET,dIn=far?Math.min(CRT.SHW-Math.abs(X),CRT.L-Y,Y-CRT.NET):Math.min(CRT.SHW-Math.abs(X),Y,CRT.NET-Y);
+  const m=Math.max(0.25,(fin(b.kmh)?b.kmh/3.6:20)*dt*0.6);
+  b.call=dIn>m?'in':dIn<-m?'uit':'twijfel';b.depth=far?CRT.L-Y:Y;b.side=Math.abs(X)<1.4?'midden':(X<0?'links':'rechts');b.half=far?'ver':'dichtbij';
+  return b;
+}
+function findBounces(path,tmin){
+  if(!path||path.length<5)return[];const H=v.videoHeight,c=[],ays=[];
+  for(let i=1;i<path.length-1;i++){const a=path[i-1],b=path[i],d=path[i+1],d1=Math.max(1e-3,b.t-a.t),d2=Math.max(1e-3,d.t-b.t);
+    const vy1=(b.y-a.y)*H/d1,vy2=(d.y-b.y)*H/d2,ay=(vy2-vy1)/((d1+d2)/2);ays.push(Math.abs(ay));if(b.t>=tmin&&vy2<vy1)c.push({i,ay})}
+  const med=ays.slice().sort((a,b)=>a-b)[Math.floor(ays.length/2)]||1;
+  const strong=c.filter(q=>q.ay<-2.5*med).sort((a,b)=>a.ay-b.ay),out=[];
+  for(const q of strong){const p=path[q.i];if(out.every(o=>Math.abs(o.t-p.t)>0.25))out.push({t:p.t,x:p.x,y:p.y})}
+  return out.sort((a,b)=>a.t-b.t);
+}
 async function analyzeBall(c,prog){
-  const tc=Number.isFinite(c.tcManual)?c.tcManual:c.ana&&Number.isFinite(c.ana.tc)?c.ana.tc:c.t0+(c.t1-c.t0)*0.55;
-  const ta=Math.max(0,tc-0.2),tb=Math.min(v.duration,tc+1.8),dt=1/anaFps(),n=Math.round((tb-ta)/dt);
+  const rally=c.label==='punt';
+  const tc=rally?c.t0:Number.isFinite(c.tcManual)?c.tcManual:c.ana&&Number.isFinite(c.ana.tc)?c.ana.tc:c.t0+(c.t1-c.t0)*0.55;
+  const ta=rally?c.t0:Math.max(0,tc-0.2),tb=rally?c.t1:Math.min(v.duration,tc+1.8),dt=1/anaFps(),n=Math.max(1,Math.round((tb-ta)/dt));
   const r=ballROI(),scale=Math.min(1,960/r.w);
   const raw=[];let prevFp=null;
   // follow the player during the scan so his body (shoes, arms) is not mistaken for the ball
@@ -1406,7 +1435,7 @@ async function analyzeBall(c,prog){
   let box=null,k2=0;
   const bodyBox=P=>{let x0=1,x1=0,y0=1,y1=0;for(const i of KEYPTS.concat([0,29,30,31,32])){if(P[i].v<0.3)continue;x0=Math.min(x0,P[i].x);x1=Math.max(x1,P[i].x);y0=Math.min(y0,P[i].y);y1=Math.max(y1,P[i].y)}
     const mh=(y1-y0)*0.12,mw=mh*v.videoHeight/v.videoWidth;return{x0:x0-mw,x1:x1+mw,y0:y0-mh*1.5,y1:y1+mh}};
-  if(lm0)box=bodyBox(lm0);
+  if(lm0&&!rally)box=bodyBox(lm0);
   for(let i=0;i<=n;i++){if(state.cancel)return false;await seek(ta+i*dt);const fp=frameFingerprint();
     if(prevFp&&fp&&fpDiff(fp,prevFp)<0.05){prog(i/n);continue}prevFp=fp;
     if((tr||c.crop)&&(k2++%2===0)){const P=detectFor(c.crop,tr);if(P)box=bodyBox(P)}
@@ -1415,64 +1444,97 @@ async function analyzeBall(c,prog){
     if(raw.length>3)raw[raw.length-4].g=null;
     prog(i/n)}
   const frames=raw.filter(f=>f.c).map(f=>({t:f.t,c:f.c}));
-  const path=pickBallTrack(linkTracks(frames),tc);
-  const res={v:1,tc,track:path?path.map(p=>[+p.t.toFixed(3),+p.x.toFixed(4),+p.y.toFixed(4)]):[],nDet:frames.reduce((a,f)=>a+f.c.length,0)};
-  if(path){const b=findBounce(path,tc);
-    if(b){res.bounce={t:b.t,x:b.x,y:b.y};const ch=courtH();
-      if(ch&&ch.toCourt){const W=v.videoWidth,H=v.videoHeight,[X,Y]=applyH(ch.toCourt,b.x*W,b.y*H);Object.assign(res.bounce,{X,Y});
-        const farSide=Y>CRT.NET;
-        const dIn=farSide?Math.min(CRT.SHW-Math.abs(X),CRT.L-Y,Y-CRT.NET):Math.min(CRT.SHW-Math.abs(X),Y,CRT.NET-Y);
-        const flight=b.t-tc;let speed=NaN;
-        if(c.ana&&c.ana.lm){const P=c.ana.lm,ax=(P[27][0]+P[28][0])/2*W,ay=(P[27][1]+P[28][1])/2*H,[PX,PY]=applyH(ch.toCourt,ax,ay);
-          if(flight>0.15)speed=Math.hypot(X-PX,Y-PY)/flight*3.6;res.from={X:PX,Y:PY}}
-        const margin=Math.max(0.25,(fin(speed)?speed/3.6:20)*dt*0.6);
-        res.bounce.call=dIn>margin?'in':dIn<-margin?'uit':'twijfel';
-        res.speed=speed;res.depth=farSide?CRT.L-Y:Y;res.side=Math.abs(X)<1.4?'midden':(X<0?'links':'rechts');res.margin=margin}}}
+  const tracks=linkTracks(frames),W=v.videoWidth,H=v.videoHeight;
+  const enc=pts=>pts.map(p=>[+p.t.toFixed(3),+p.x.toFixed(4),+p.y.toFixed(4)]);
+  const res={v:2,tc,rally,tracks:[],bounces:[],nDet:frames.reduce((a,f)=>a+f.c.length,0)};
+  if(rally){
+    const fast=tracks.filter(t=>{let d=0;for(let i=1;i<t.pts.length;i++)d+=Math.hypot((t.pts[i].x-t.pts[i-1].x)*W,(t.pts[i].y-t.pts[i-1].y)*H);return d/Math.max(1e-3,t.pts[t.pts.length-1].t-t.pts[0].t)/H>=0.35});
+    res.tracks=fast.map(t=>enc(t.pts));
+    let all=[];for(const t of fast)all=all.concat(findBounces(t.pts,t.pts[0].t+0.1));
+    all.sort((a,b)=>a.t-b.t);for(const b of all)if(res.bounces.every(o=>Math.abs(o.t-b.t)>0.2))res.bounces.push(classifyBounce(b,dt));
+  }else{
+    const path=pickBallTrack(tracks,tc);
+    if(path){res.tracks=[enc(path)];const b=findBounces(path,tc+0.15)[0];
+      if(b){classifyBounce(b,dt);const ch=courtH();
+        if(fin(b.X)&&c.ana&&c.ana.lm&&ch&&ch.toCourt){const P=c.ana.lm,[PX,PY]=applyH(ch.toCourt,(P[27][0]+P[28][0])/2*W,(P[27][1]+P[28][1])/2*H),flight=b.t-tc;
+          if(flight>0.15){b.kmh=Math.hypot(b.X-PX,b.Y-PY)/flight*3.6;classifyBounce(b,dt)}res.from={X:PX,Y:PY}}
+        res.bounces=[b];res.speed=b.kmh;res.depth=b.depth;res.side=b.side}}
+  }
   c.ball=res;return true;
 }
+const ballTracks=b=>b?(b.tracks||(b.track&&b.track.length?[b.track]:[])):[];
+const ballBounces=b=>b?(b.bounces||(b.bounce?[b.bounce]:[])):[];
 $('#bBall').onclick=async()=>{
   const list=visibleClips();if(!list.length){toast('Nog geen clips');return}
   const r=await runExport('Bal volgen in '+list.length+' clips',async prog=>{for(let i=0;i<list.length;i++){const ok=await analyzeBall(list[i],p=>prog((i+p)/list.length));if(!ok)return null;persist()}return true});
   persist();render();
-  if(r){const n=list.filter(c=>c.ball&&c.ball.bounce).length;toast('Bal gevolgd: stuitpunt gevonden in '+n+' van '+list.length+' clips',5000)}
+  if(r){const n=list.filter(c=>ballBounces(c.ball).length).length;toast('Bal gevolgd: stuitpunt(en) gevonden in '+n+' van '+list.length+' clips',5000)}
 };
 
 // --- court map + table ---
 function drawCourtMap(cv,list,big){
+  const pts=[];for(const c of list){const bs=ballBounces(c.ball).filter(b=>fin(b.X));
+    if(c.label==='punt')bs.forEach((b,i)=>pts.push({b,c,n:i+1}));else if(bs[0])pts.push({b:bs[0],c})}
+  const full=pts.some(p=>p.b.Y<CRT.NET);
   const ctx=cv.getContext('2d'),dpr=big?1:(window.devicePixelRatio||1);
-  const cssW=big?700:cv.clientWidth||300,mx=1.6,my=1.2,cw=CRT.HW*2+mx*2,chh=CRT.NET+my*2,sc=cssW/cw,cssH=Math.round(chh*sc)+(big?60:0);
+  const y0=full?0:CRT.NET,mx=1.6,my=1.2,cw=CRT.HW*2+mx*2,chh=CRT.L-y0+my*2;
+  const cssW=big?(full?560:700):cv.clientWidth||300,sc=cssW/cw,cssH=Math.round(chh*sc)+(big?60:0);
   cv.width=Math.round(cssW*dpr);cv.height=Math.round(cssH*dpr);if(!big)cv.style.height=cssH+'px';ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.fillStyle='#0b100d';ctx.fillRect(0,0,cssW,cssH);
-  const P=(X,Y)=>[(X+CRT.HW+mx)*sc,(CRT.L-Y+my)*sc];// far half, far baseline at top
-  ctx.fillStyle='#1f3b2a';const a=P(-CRT.HW,CRT.L),b=P(CRT.HW,CRT.NET);ctx.fillRect(a[0],a[1],b[0]-a[0],b[1]-a[1]);
+  const P=(X,Y)=>[(X+CRT.HW+mx)*sc,(CRT.L-Y+my)*sc];
+  ctx.fillStyle='#1f3b2a';const a=P(-CRT.HW,CRT.L),b=P(CRT.HW,y0);ctx.fillRect(a[0],a[1],b[0]-a[0],b[1]-a[1]);
   ctx.strokeStyle='rgba(255,255,255,.8)';ctx.lineWidth=1.5;
   const L=(x1,y1,x2,y2)=>{const A=P(x1,y1),B=P(x2,y2);ctx.beginPath();ctx.moveTo(A[0],A[1]);ctx.lineTo(B[0],B[1]);ctx.stroke()};
-  L(-CRT.HW,CRT.L,CRT.HW,CRT.L);L(-CRT.HW,CRT.L,-CRT.HW,CRT.NET);L(CRT.HW,CRT.L,CRT.HW,CRT.NET);L(-CRT.SHW,CRT.L,-CRT.SHW,CRT.NET);L(CRT.SHW,CRT.L,CRT.SHW,CRT.NET);
-  L(-CRT.SHW,CRT.L-CRT.SV,CRT.SHW,CRT.L-CRT.SV);L(0,CRT.L-CRT.SV,0,CRT.NET);ctx.lineWidth=3;L(-CRT.HW-0.9,CRT.NET,CRT.HW+0.9,CRT.NET);
-  for(const c of list){const bb=c.ball&&c.ball.bounce;if(!bb||!fin(bb.X))continue;let Y=bb.Y;if(Y<CRT.NET)continue;
-    const q=P(bb.X,Y),col=LABELS[c.label].color;ctx.fillStyle=col;ctx.strokeStyle=bb.call==='uit'?'#f87171':bb.call==='twijfel'?'#fbbf24':'#111';ctx.lineWidth=2;
+  const{HW,SHW,SV,NET}=CRT,LL=CRT.L;
+  L(-HW,LL,HW,LL);L(-HW,LL,-HW,y0);L(HW,LL,HW,y0);L(-SHW,LL,-SHW,y0);L(SHW,LL,SHW,y0);L(-SHW,LL-SV,SHW,LL-SV);L(0,LL-SV,0,full?SV:NET);
+  if(full){L(-HW,0,HW,0);L(-SHW,SV,SHW,SV)}
+  ctx.lineWidth=3;L(-HW-0.9,NET,HW+0.9,NET);
+  for(const{b:bb,c,n}of pts){const q=P(bb.X,bb.Y);ctx.fillStyle=LABELS[c.label].color;ctx.strokeStyle=bb.call==='uit'?'#f87171':bb.call==='twijfel'?'#fbbf24':'#111';ctx.lineWidth=2;
     ctx.beginPath();ctx.arc(q[0],q[1],big?7:5,0,7);ctx.fill();ctx.stroke();
-    if(big){ctx.fillStyle='#fff';ctx.font='11px system-ui,sans-serif';ctx.fillText('#'+indexOf(c),q[0]+8,q[1]-6)}}
+    if(big||n){ctx.fillStyle='#fff';ctx.font=(big?11:9)+'px system-ui,sans-serif';ctx.fillText(n?String(n):'#'+indexOf(c),q[0]+7,q[1]-5)}}
   if(big){ctx.fillStyle='#cfd8d2';ctx.font='13px system-ui,sans-serif';let x=12;const y=cssH-34;
-    for(const k in LABELS){if(!list.some(c=>c.label===k&&c.ball&&c.ball.bounce))continue;ctx.fillStyle=LABELS[k].color;ctx.beginPath();ctx.arc(x+5,y,5,0,7);ctx.fill();ctx.fillStyle='#cfd8d2';ctx.fillText(LABELS[k].name,x+14,y+4);x+=ctx.measureText(LABELS[k].name).width+34}
-    ctx.fillText('Rode rand = uit · oranje rand = twijfel (te dicht bij de lijn om te beslissen)',12,cssH-12)}
+    for(const k in LABELS){if(!pts.some(p=>p.c.label===k))continue;ctx.fillStyle=LABELS[k].color;ctx.beginPath();ctx.arc(x+5,y,5,0,7);ctx.fill();ctx.fillStyle='#cfd8d2';ctx.fillText(LABELS[k].name,x+14,y+4);x+=ctx.measureText(LABELS[k].name).width+34}
+    ctx.fillText('Rode rand = uit · oranje = twijfel · bij een punt: nummer = volgorde van de stuiten',12,cssH-12)}
 }
 function renderBall(){
   const el=$('#ballTable');if(!el)return;renderCal();
   const list=visibleClips().filter(c=>c.ball);
-  $('#bCourtPng').disabled=!list.some(c=>c.ball.bounce&&fin(c.ball.bounce.X));
+  $('#bCourtPng').disabled=!list.some(c=>ballBounces(c.ball).some(b=>fin(b.X)));
   drawCourtMap($('#courtMap'),list,false);
   if(!list.length){el.innerHTML='';return}
-  let h='<div style="overflow:auto;max-height:30vh"><table class="ana"><tr><th>Slag</th><th title="Gemiddelde snelheid van raken tot stuit">km/u</th><th title="Afstand van het stuitpunt tot de achterlijn">Diepte</th><th>Kant</th><th title="In of uit (enkelspel)">In/uit</th><th title="Aantal beelden waarin de bal gevolgd is">Baan</th></tr>';
-  for(const c of list){const b=c.ball,L=LABELS[c.label],bb=b.bounce;
-    h+='<tr class="row'+(c.id===state.sel?' sel':'')+'" data-id="'+c.id+'"><td><span class="dot" style="background:'+L.color+'"></span>'+L.name.slice(0,2)+' '+numberOf(c)+(b.stale?' <span style="color:#fbbf24" title="Kalibratie gewijzigd: opnieuw analyseren">!</span>':'')+'</td><td>'+r0(b.speed)+'</td><td>'+(fin(b.depth)?b.depth.toFixed(1).replace('.',',')+' m':'–')+'</td><td>'+(b.side||'–')+'</td><td>'+(bb&&bb.call?bb.call:(bb?'?':'–'))+'</td><td>'+b.track.length+'</td></tr>'}
-  const sp=list.map(c=>c.ball.speed).filter(fin),calls=list.map(c=>c.ball.bounce&&c.ball.bounce.call).filter(Boolean);
+  let h='<div style="overflow:auto;max-height:30vh"><table class="ana"><tr><th>Clip</th><th title="Gemiddelde snelheid van raken tot stuit">km/u</th><th title="Afstand van het stuitpunt tot de achterlijn">Diepte</th><th>Kant</th><th title="In of uit (enkelspel)">In/uit</th><th title="Aantal beelden waarin de bal gevolgd is">Baan</th></tr>';
+  for(const c of list){const b=c.ball,L=LABELS[c.label],bs=ballBounces(b),bb=bs[0],npts=ballTracks(b).reduce((a,t)=>a+t.length,0);
+    const st=b.stale?' <span style="color:#fbbf24" title="Kalibratie gewijzigd: opnieuw volgen">!</span>':'';
+    if(c.label==='punt'){const last=bs[bs.length-1];
+      h+='<tr class="row'+(c.id===state.sel?' sel':'')+'" data-id="'+c.id+'"><td><span class="dot" style="background:'+L.color+'"></span>Punt '+numberOf(c)+st+'</td><td>–</td><td>–</td><td>–</td><td>'+bs.length+' stuit'+(last&&last.call?' · laatste '+last.call:'')+'</td><td>'+npts+'</td></tr>'}
+    else h+='<tr class="row'+(c.id===state.sel?' sel':'')+'" data-id="'+c.id+'"><td><span class="dot" style="background:'+L.color+'"></span>'+L.name.slice(0,2)+' '+numberOf(c)+st+'</td><td>'+r0(bb&&bb.kmh)+'</td><td>'+(bb&&fin(bb.depth)?bb.depth.toFixed(1).replace('.',',')+' m':'–')+'</td><td>'+(bb&&bb.side||'–')+'</td><td>'+(bb?(bb.call||'?'):'–')+'</td><td>'+npts+'</td></tr>'}
+  const sp=list.filter(c=>c.label!=='punt').map(c=>{const b=ballBounces(c.ball)[0];return b&&b.kmh}).filter(fin);
+  const calls=list.filter(c=>c.label!=='punt').map(c=>{const b=ballBounces(c.ball)[0];return b&&b.call}).filter(Boolean);
   el.innerHTML=h+'</table></div><div class="note">'+(sp.length?'Gem. snelheid '+Math.round(sp.reduce((a,b)=>a+b,0)/sp.length)+' km/u · ':'')+(calls.length?calls.filter(x=>x==='in').length+' in, '+calls.filter(x=>x==='uit').length+' uit, '+calls.filter(x=>x==='twijfel').length+' twijfel · ':'')+'Klik op een rij om de clip met balbaan te bekijken.</div>';
 }
 window.__renderBall=renderBall;
-$('#ballTable').addEventListener('click',e=>{const tr=e.target.closest('tr.row');if(!tr)return;const c=getClip(tr.dataset.id);if(!c)return;state.sel=c.id;v.pause();seekTo(c.t0);render();previewClip({t0:c.ball.tc-0.2,t1:Math.min(v.duration,c.ball.tc+1.8)})});
+$('#ballTable').addEventListener('click',e=>{const tr=e.target.closest('tr.row');if(!tr)return;const c=getClip(tr.dataset.id);if(!c)return;state.sel=c.id;v.pause();render();
+  previewClip(c.label==='punt'?c:{t0:Math.max(0,c.ball.tc-0.2),t1:Math.min(v.duration,c.ball.tc+1.8)})});
 $('#bCourtPng').onclick=()=>{const cv=document.createElement('canvas');const list=visibleClips().filter(c=>c.ball);drawCourtMap(cv,list,true);cv.toBlob(b=>offerFile(b,base()+'_stuitpunten.png'),'image/png')};
 window.addEventListener('resize',()=>renderBall());
+
+// --- calibration fine-tuning: drag the 4 points, arrow keys for 1 px ---
+let calDrag=-1;
+function setCalEdit(on){state.calEdit=on&&!!state.court;state.calSel=state.calEdit?Math.max(0,state.calSel|0):-1;$('#bCalEdit').classList.toggle('on',state.calEdit);$('#wrap').classList.toggle('cal-mode',state.calEdit||state.calMode);if(on)v.pause();renderCal()}
+$('#bCalEdit').onclick=()=>{if(!state.court){toast('Kalibreer eerst de baan');return}setCalEdit(!state.calEdit)};
+function calHit(p){const r=layer.getBoundingClientRect();let best=-1,bd=28;state.court.pts.forEach((q,i)=>{const d=Math.hypot((q.x-p.x)*r.width,(q.y-p.y)*r.height);if(d<bd){bd=d;best=i}});return best}
+window.__calEditDown=(e,p)=>{const i=calHit(p);if(i<0)return false;state.calSel=i;calDrag=i;layer.setPointerCapture(e.pointerId);renderCal();return true};
+layer.addEventListener('pointermove',e=>{if(calDrag<0)return;const p=relPt(e);state.court.pts[calDrag]={x:p.x,y:p.y}});
+const calEnd=()=>{if(calDrag<0)return;calDrag=-1;for(const c of state.clips)if(c.ball)c.ball.stale=true;persist();renderBall()};
+layer.addEventListener('pointerup',calEnd);layer.addEventListener('pointercancel',calEnd);
+window.__calNudge=(dx,dy)=>{if(!state.calEdit||state.calSel<0)return false;const q=state.court.pts[state.calSel];q.x=clamp(q.x+dx/v.videoWidth,0,1);q.y=clamp(q.y+dy/v.videoHeight,0,1);
+  for(const c of state.clips)if(c.ball)c.ball.stale=true;persist();return true};
+OVERLAYS.push((ctx,w,h,dpr)=>{if(!state.calEdit||!state.court)return;
+  state.court.pts.forEach((q,i)=>{const sel=i===state.calSel;ctx.strokeStyle=sel?'#d4f53c':'#fff';ctx.lineWidth=2*dpr;ctx.beginPath();ctx.arc(q.x*w,q.y*h,(sel?9:7)*dpr,0,7);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(q.x*w-14*dpr,q.y*h);ctx.lineTo(q.x*w+14*dpr,q.y*h);ctx.moveTo(q.x*w,q.y*h-14*dpr);ctx.lineTo(q.x*w,q.y*h+14*dpr);ctx.stroke();
+    pill(ctx,String(i+1),q.x*w+18*dpr,q.y*h-16*dpr,12*dpr,sel?'#d4f53c':'#fff')});
+  pill(ctx,'Sleep een punt of gebruik de pijltjes (Shift = 5 px) · Tab = volgend punt · Esc/Enter = klaar',w/2,24*dpr,12*dpr,'#fff')});
+
 
 render();
 })();

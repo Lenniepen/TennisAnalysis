@@ -5,10 +5,10 @@ Tennisvideo's analyseren in je browser: slagen taggen en knippen, een skeletmode
 **Starten:** open de GitHub Pages-link van deze repository in Chrome of Edge op een computer. Je video wordt **niet** geüpload: alles draait lokaal in je browser.
 
 ## Wat het kan
-- **Knippen:** tag slagen met een sneltoets op het raakmoment (F forehand, B backhand, S service, V volley, X overig). Exporteer daarna een montage, losse clips als zip, of ffmpeg-commando's.
+- **Knippen:** tag slagen met een sneltoets op het raakmoment (F forehand, B backhand, S service, V volley, X overig). Een heel punt knip je met I (begin), O of gewoon naar het einde gaan, en dan R. Exporteer daarna een montage, losse clips als zip, of ffmpeg-commando's.
 - **Speler kiezen (W):** alle spelers in beeld krijgen een nummer; klik op wie gevolgd moet worden.
 - **Skelet (K)** en **slaganalyse:** kniehoek, romphelling, elleboog, indraaien, hoogtecurve, handsnelheid en afmaken. Raakmomenten loop je langs met N en zet je vast met T. De uitkomsten exporteer je als analyseblad (png) of als csv.
-- **Bal-tracking (experimenteel):** kalibreer de baan met 4 klikken. Daarna geeft de app per slag het stuitpunt, de diepte, de kant, of de bal in of uit was, en de gemiddelde snelheid, plus een plattegrond van alle stuitpunten.
+- **Bal-tracking (experimenteel):** kalibreer de baan met 4 klikken en stel de punten daarna bij door ze te verslepen of met de pijltjestoetsen. Daarna geeft de app per slag het stuitpunt, de diepte, de kant, of de bal in of uit was, en de gemiddelde snelheid, plus een plattegrond van alle stuitpunten.
 
 Alle sneltoetsen staan in de app onder *Sneltoetsen & werkwijze*.
 
