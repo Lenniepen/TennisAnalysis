@@ -1,0 +1,1 @@
+﻿const c=require('./ballcore.js');const P={allowed:null};module.exports={prep:c.ballPrep,blobsFrom:(a,b,d,r,s,W,H)=>c.blobsFrom(a,b,d,r,s,W,H,P.allowed),linkTracks:c.linkTracks,P,ballSpace:c.ballSpace};
