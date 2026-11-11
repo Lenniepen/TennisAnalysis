@@ -252,6 +252,7 @@ details li{margin:2px 0}
         <li><kbd>↑</kbd><kbd>↓</kbd> snelheid · <kbd>M</kbd> geluid</li>
         <li><kbd>C</kbd> uitsnede tekenen; sleep het kader om het te verplaatsen, het hoekje om te vergroten</li>
         <li>Uitsnede geldt voor nieuwe clips, of voor de <b>geselecteerde</b> clip als je er een aanklikt (<kbd>Esc</kbd> deselecteert)</li>
+        <li>Klik op een clip (in de lijst of de tijdlijn): je springt naar het raakmoment, of naar het begin als dat nog niet bekend is. ▶ speelt de hele clip af.</li>
         <li><kbd>[</kbd> / <kbd>]</kbd> begin/einde van geselecteerde clip naar huidige tijd · <kbd>P</kbd> clip afspelen · <kbd>Delete</kbd> verwijderen · <kbd>Ctrl</kbd>+<kbd>Z</kbd> ongedaan</li>
         <li><b>Raakmomenten nakijken:</b> <kbd>N</kbd> volgende slag (<kbd>Shift</kbd>+<kbd>N</kbd> vorige), bijstellen met <kbd>,</kbd> <kbd>.</kbd>, vastzetten met <kbd>T</kbd></li>
         <li><kbd>W</kbd> speler kiezen: alle spelers krijgen een nummer, klik op jezelf. Geldt voor nieuwe clips, of voor de geselecteerde clip. Een uitsnede heeft voorrang.</li>
@@ -458,7 +459,8 @@ function scrollWithin(el,box){
 }
 function selectClip(id,seek){
   state.sel=id;const c=getClip(id);
-  if(c&&seek)seekTo(c.t0);
+  // jump straight to the contact moment when known (manual first, then the analysis); otherwise to the start
+  if(c&&seek){const tc=c.label!=='punt'?(Number.isFinite(c.tcManual)?c.tcManual:c.ana&&Number.isFinite(c.ana.tc)?c.ana.tc:null):null;v.pause();seekTo(tc!=null?tc:c.t0);if(tc!=null)flash('Raakmoment '+LABELS[c.label].name+' '+numberOf(c),LABELS[c.label].color)}
   render();
   const li=document.querySelector('#list li[data-id="'+id+'"]');scrollWithin(li,$('#list'));
 }
