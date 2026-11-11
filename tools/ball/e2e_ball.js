@@ -1,4 +1,4 @@
-// headless Chrome: open video, make a "punt" clip t0..t1, run "Bal volgen", report the result and take screenshots
+﻿// headless Chrome: open video, make a "punt" clip t0..t1, run "Bal volgen", report the result and take screenshots
 // usage: node e2e_ball.js <repoDir> <outDir> <video> <t0> <t1> [shotTimes comma separated]
 const http=require('http'),fs=require('fs'),path=require('path'),{spawn}=require('child_process');
 const[repo,outDir,vid,T0,T1,shots='']=process.argv.slice(2);
@@ -33,9 +33,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   for(let i=0;i<1200;i++){await sleep(500);const t=await toast();if(/Bal gevolgd|mislukt|niet geladen/.test(t)&&!/Bal volgen in/.test(t)){console.log('na',((Date.now()-t0)/1000).toFixed(0)+'s:',t);if(/Bal gevolgd/.test(t))break}}
   const dbg=await ev(`(()=>{const d=window.__ballDbg;if(!d||d===true)return null;const r4=x=>+x.toFixed(4);
     return JSON.stringify({r:d.r,fps:25,frames:d.frames.map(f=>({t:f.t,c:f.c.map(c=>({x:r4(c.x),y:r4(c.y),a:c.a,yel:+c.yel.toFixed(1)})),boxes:f.boxes})),
-      tracks:(d.ev?d.ev.flights:d.tracks.map(t=>t.pts)).map(p=>({pts:p})),raw:d.tracks.length,fast:d.fast?d.fast.length:null,bounces:d.ev?d.ev.bounces:[],hits:d.ev?d.ev.hits:[]})})()`);
-  if(dbg){fs.writeFileSync(path.join(outDir,'app_dbg.json'),dbg);const D=JSON.parse(dbg);console.log('debug: baanstukken',D.raw,'na filter',D.fast,'vluchten',D.tracks.length,'| stuiten',D.bounces.map(b=>b.t.toFixed(2)).join(' '),'| slagen',D.hits.map(b=>b.t.toFixed(2)).join(' '))}
-  const fin_=await ev(`(()=>{const k=Object.keys(localStorage).find(k=>k.startsWith('tcp:clips:'));if(!k)return null;const c=JSON.parse(localStorage.getItem(k)).clips[0];return JSON.stringify({b:(c.ball.bounces||[]).map(b=>b.t.toFixed(2)+':'+(b.call||'?')+'/'+(b.half||'')),h:(c.ball.hits||[]).map(h=>h.t.toFixed(2)+'/'+(h.half||''))})})()`);
+      tracks:(d.ev?d.ev.flights:d.tracks.map(t=>t.pts)).map(p=>({pts:p})),raw:d.tracks.length,fast:d.fast?d.fast.length:null,bounces:d.ev?d.ev.bounces:[],hits:d.ev?d.ev.hits:[],crossings:d.ev&&d.ev.crossings||[],
+      raw:d.evRaw?{b:d.evRaw.bounces.map(e=>e.t.toFixed(2)+'@'+e.x.toFixed(2)+','+e.y.toFixed(2)),h:d.evRaw.hits.map(e=>e.t.toFixed(2)+'@'+e.x.toFixed(2)+','+e.y.toFixed(2)),t:(d.evRaw.turns||[]).map(e=>e.t.toFixed(2)+'@'+e.x.toFixed(2)+','+e.y.toFixed(2))}:null})})()`);
+  if(dbg){fs.writeFileSync(path.join(outDir,'app_dbg.json'),dbg);const D=JSON.parse(dbg);console.log('debug: baanstukken',D.raw,'na filter',D.fast,'vluchten',D.tracks.length,'| stuiten',D.bounces.map(b=>b.t.toFixed(2)).join(' '),'| slagen',D.hits.map(b=>b.t.toFixed(2)).join(' '));console.log('net over:',D.crossings.map(c=>c.t.toFixed(2)+'->'+c.to).join(' '));console.log('ruw:',JSON.stringify(D.raw))}
+  const fin_=await ev(`(()=>{const k=Object.keys(localStorage).find(k=>k.startsWith('tcp:clips:'));if(!k)return null;const c=JSON.parse(localStorage.getItem(k)).clips[0];return JSON.stringify({b:(c.ball.bounces||[]).map(b=>b.t.toFixed(2)+':'+(b.call||'?')+'/'+(b.half||'')),h:(c.ball.hits||[]).map(h=>h.t.toFixed(2)+'/'+(h.side||h.half||''))})})()`);
   console.log('eindresultaat:',fin_);
   console.log('bal-paneel:',(await ev("(document.querySelector('[data-panel=ball]')||{}).innerText||''")).replace(/\s+/g,' ').slice(0,700));
   await ev("(()=>{const p=document.querySelector('[data-panel=ball]');const row=[...p.querySelectorAll('tr,div')].reverse().find(e=>/^\\s*Punt 1/.test(e.textContent)&&e.textContent.length<120);if(row)row.click();return !!row})()");await sleep(500);

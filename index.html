@@ -1805,11 +1805,12 @@ function blobsFrom(prev,cur,next,r,scale,VW,VH,allowed,noIso,prev2,next2){const 
     while(stack.length){const k=stack.pop(),x=k%w,y=(k/w)|0;a++;sx+=x;sy+=y;sxx+=x*x;syy+=y*y;sxy+=x*y;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;
       const bR=(prev.R[k]+next.R[k])/2,bG=(prev.G[k]+next.G[k])/2,bB=(prev.B[k]+next.B[k])/2;ys+=((cur.R[k]-bR)+(cur.G[k]-bG))/2-(cur.B[k]-bB);
       for(const q of[k-1,k+1,k-w,k+w,k-w-1,k-w+1,k+w-1,k+w+1]){if(q<0||q>=n||lab[q]||!mask[q])continue;if(Math.abs((q%w)-x)>1)continue;lab[q]=id;stack.push(q)}}
-    const bw=x1-x0+1,bh=y1-y0+1;if(a<2||a>maxA)continue;
+    const bw=x1-x0+1,bh=y1-y0+1;if(a<2||a>maxA*6)continue;
     // shape along the blob's own axis: round (slow ball) or a thin streak (fast ball, motion blur near the camera)
     const mx=sx/a,my=sy/a,cxx=sxx/a-mx*mx+1/12,cyy=syy/a-my*my+1/12,cxy=sxy/a-mx*my,tr=cxx+cyy,dt_=Math.sqrt(Math.max(0,(cxx-cyy)**2/4+cxy*cxy)),l1=tr/2+dt_,l2=Math.max(0.08,tr/2-dt_);
     const elong=Math.sqrt(l1/l2),streak=elong>3.5;
-    if(streak){if(elong>14||Math.sqrt(l2)>3.5*Math.max(scale,0.5)||a<5)continue}else if(a<0.3*bw*bh)continue;
+    // a streak may be long (a fast ball close to the camera smears over 50-100 px), so it may have a larger area than a round ball
+    if(streak){if(elong>25||Math.sqrt(l2)>3.5*Math.max(scale,0.5)||a<5)continue}else if(a<0.3*bw*bh||a>maxA)continue;
     // isolation: a ball is a small island of motion; an arm/racket/leg sits in a big moving area
     const m=streak?Math.max(6,4*Math.sqrt(l2)):Math.max(6,Math.max(bw,bh)*1.5),around=box(x0-m,y0-m,x1+1+m,y1+1+m);if(!noIso&&around>P.iso*a+20+(streak?a:0))continue;
     const vx=r.x+(sx/a+0.5)/scale,vy=r.y+(sy/a+0.5)/scale;if(allowed&&!allowed(vx,vy))continue;
