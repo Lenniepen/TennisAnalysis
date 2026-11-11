@@ -20,9 +20,12 @@ function ballSpace(toImg,VW,VH){const M=2.5,HW=5.485,L=23.77;
     return x>=fl[0]-0.02*VW&&x<=fr[0]+0.02*VW}}
 // candidates in the middle frame: pixels that differ from BOTH neighbours (the object is here now, not before/after)
 // noIso: skip the isolation test (near the hand at the moment of contact the ball touches the racket)
-function blobsFrom(prev,cur,next,r,scale,VW,VH,allowed,noIso){const P=BALLP;
+// prev2/next2 (optional, 2 frames away): a slow ball (top of a lob) moves less than its own width per frame and
+// would hide in the overlap with its neighbours; comparing 2 frames away keeps it visible
+function blobsFrom(prev,cur,next,r,scale,VW,VH,allowed,noIso,prev2,next2){const P=BALLP;
   const w=cur.w,h=cur.h,n=w*h,mask=new Uint8Array(n),loose=new Uint8Array(n);
-  for(let i=0;i<n;i++){const c=cur.lum[i],d1=Math.abs(c-prev.lum[i]),d2=Math.abs(c-next.lum[i]);
+  for(let i=0;i<n;i++){const c=cur.lum[i];let d1=Math.abs(c-prev.lum[i]),d2=Math.abs(c-next.lum[i]);
+    if(prev2&&next2){d1=Math.max(d1,Math.abs(c-prev2.lum[i]));d2=Math.max(d2,Math.abs(c-next2.lum[i]))}
     if(d1>P.loose||d2>P.loose)loose[i]=1;if(d1>P.motion&&d2>P.motion)mask[i]=1}
   // integral image of loose motion, for the isolation test
   const I=new Int32Array((w+1)*(h+1));for(let y=0;y<h;y++){let s=0;for(let x=0;x<w;x++){s+=loose[y*w+x];I[(y+1)*(w+1)+x+1]=I[y*(w+1)+x+1]+s}}
@@ -79,7 +82,9 @@ function linkTracks(frames,W,H){
 // boxesAt(t) -> person boxes [{x0,x1,y0,y1}] (normalised) at time t. Event near a person and above the feet = hit, else
 // a sharp change from "going down" to "going up (less down)" in the image = bounce.
 // Returns {flights:[[{t,x,y}]], bounces:[{t,x,y}], hits:[{t,x,y}]}
-function ballEvents(tracks,boxesAt,W,H){
+// netY(xPx) -> image y (px) of the net at that x (optional): a bounce on the near half only counts when the ball came over the net
+// (rules out bouncing the ball before the serve, and noise around the near player)
+function ballEvents(tracks,boxesAt,W,H,netY){
   const T=tracks.map(t=>t.pts.slice()).sort((a,b)=>a[0].t-b[0].t);
   const vel=(p,i,dir)=>{// mean velocity (px/s) over up to 2 steps on one side of point i
     const j=Math.max(0,Math.min(p.length-1,i+2*dir));if(j===i)return null;const a=dir>0?p[i]:p[j],b=dir>0?p[j]:p[i],dt=b.t-a.t;if(dt<=0)return null;
@@ -94,6 +99,7 @@ function ballEvents(tracks,boxesAt,W,H){
     flights.push({path,joins})}
   // 2. events: direction changes inside a flight, and every join
   const isHit=(p)=>{const bx=boxesAt?boxesAt(p.t):[];return bx.some(b=>{const mw=(b.x1-b.x0)*0.25,mh=(b.y1-b.y0)*0.1;return p.x>b.x0-mw&&p.x<b.x1+mw&&p.y>b.y0-mh*2&&p.y<b.y1-(b.y1-b.y0)*0.2})};
+  const onPerson=(p)=>{const bx=boxesAt?boxesAt(p.t):[];return bx.some(b=>{const mw=(b.x1-b.x0)*0.1,mh=(b.y1-b.y0)*0.1;return p.x>b.x0-mw&&p.x<b.x1+mw&&p.y>b.y0-mh&&p.y<b.y1+mh})};
   const bounces=[],hits=[];
   for(const f of flights){const p=f.path;
     for(let i=1;i<p.length-1;i++){const vi=vel(p,i,-1),vo=vel(p,i,1);if(!vi||!vo)continue;
@@ -102,8 +108,13 @@ function ballEvents(tracks,boxesAt,W,H){
       const turn=cos<Math.cos(35*Math.PI/180),dropDown=vi[1]>0&&dvy<-Math.max(0.06*H,0.35*si);
       if(!(turn||dropDown||f.joins.includes(i)))continue;
       const ev={t:p[i].t,x:p[i].x,y:p[i].y};
-      if(isHit(p[i])){if(turn||f.joins.includes(i))hits.push(ev)}
-      else if(dropDown)bounces.push(ev)}}
+      if(isHit(p[i])){if(turn||f.joins.includes(i))hits.push(ev);continue}
+      if(!dropDown)continue;
+      // near half: only a ball that came over the net counts, also right at the player's feet. Bouncing the ball before
+      // the serve, a leg or a racket never gets above the net in the picture. Without a net line: skip bounces on a player.
+      if(netY){if(p[i].y*H>netY(p[i].x*W)){let over=false;for(let j=i-1;j>=0&&p[i].t-p[j].t<1.5;j--)if(p[j].y*H<netY(p[j].x*W)){over=true;break}if(!over)continue}}
+      else if(onPerson(p[i]))continue;
+      bounces.push(ev)}}
   const dedup=L=>{L.sort((a,b)=>a.t-b.t);const o=[];for(const e of L)if(!o.length||e.t-o[o.length-1].t>0.2)o.push(e);return o};
   return{flights:flights.map(f=>f.path),bounces:dedup(bounces),hits:dedup(hits)};
 }
