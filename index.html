@@ -237,7 +237,10 @@ details.info{margin-top:10px}details.info summary{cursor:pointer;color:var(--mut
     <div class="rowf">
       <button class="btn" id="bCalAuto" style="flex:1" title="Zoekt de baanlijnen zelf (gebeurt ook vanzelf bij het openen van een video)">Baan automatisch</button>
       <button class="btn" id="bCalib" style="flex:1">Met de hand</button>
-      <button class="btn" id="bCalEdit" style="flex:1">Punten bijstellen</button>
+      <button class="btn" id="bCalEdit" style="flex:1" title="Verschuif de 4 hoekpunten (ook na automatisch): slepen, of pijltjes per pixel met een vergrote loep">Fijn afstellen</button>
+    </div>
+    <div class="rowf">
+      <button class="btn" id="bCalSnap" style="flex:1" title="Zet de punten ongeveer goed (met de hand of bijstellen); dit trekt de baan precies op de witte lijnen, inclusief lenskromming">Vastklikken op lijnen</button>
     </div>
     <div class="rowf">
       <label class="mini">Nabije punten <select id="calMode"><option value="baseline">Hoeken achterlijn</option><option value="service">Servicelijn × enkelzijlijn</option></select></label>
@@ -1512,7 +1515,7 @@ const CAL_NAMES=m=>m==='service'?['nabije servicelijn, links (snijpunt met enkel
 function renderCal(){
   const el=$('#calInfo');if(!el)return;
   if(state.calMode){el.innerHTML='<b>Klik punt '+(state.calPts.length+1)+' van 4:</b> '+CAL_NAMES($('#calMode').value)[state.calPts.length]+'. <kbd>Esc</kbd> = stoppen.';return}
-  el.innerHTML=state.calEdit?'<b>Punten bijstellen:</b> sleep een punt, of kies er een (klik of <kbd>Tab</kbd>) en schuif met de pijltjes. <kbd>Esc</kbd> of <kbd>Enter</kbd> = klaar.':state.court?(state.court.auto?'Baan <b>automatisch</b> gevonden ('+Math.round((state.court.q||0)*100)+'% van de lijnen). ':'Baan gekalibreerd. ')+'Vallen de blauwe lijnen niet precies over de echte lijnen? Klik op “Punten bijstellen”. De kalibratie wordt ook gebruikt voor de service-metingen in meters (analyseer daarna opnieuw).':'Nog niet gekalibreerd: zonder kalibratie geen snelheid, diepte of in/uit. Probeer “Baan automatisch”, of klik 4 punten met de hand.';
+  el.innerHTML=state.calEdit?'<b>Fijn afstellen:</b> sleep een punt, of kies er een (klik of <kbd>Tab</kbd>; een punt buiten beeld kies je met <kbd>Tab</kbd>) en schuif met de pijltjes (<kbd>Shift</kbd> = 5 px). De loep toont het gekozen punt 5× vergroot. Daarna eventueel “Vastklikken op lijnen”. <kbd>Esc</kbd> of <kbd>Enter</kbd> = klaar.':state.court?(state.court.auto?'Baan <b>automatisch</b> gevonden ('+Math.round((state.court.q||0)*100)+'% van de lijnen)'+(state.court.edited?', daarna met de hand bijgesteld':'')+'. ':'Baan gekalibreerd. ')+'Vallen de blauwe lijnen niet precies over de echte lijnen? Klik op “Fijn afstellen”, of zet de punten ongeveer goed en klik “Vastklikken op lijnen”. De kalibratie wordt ook gebruikt voor de service-metingen in meters (analyseer daarna opnieuw).':'Nog niet gekalibreerd: zonder kalibratie geen snelheid, diepte of in/uit. Probeer “Baan automatisch”, of klik 4 punten met de hand.';
   if($('#bCalEdit'))$('#bCalEdit').disabled=!state.court;
   $('#bCalib').classList.toggle('on',state.calMode);
 }
@@ -1585,12 +1588,12 @@ function detectCourt(rgba,W,H,opt){
     lines.push({a,b,c,v:p.v})}
   // 3. split into two direction families
   const dir=l=>Math.atan2(l.a,-l.b);// line direction angle
-  if(lines.length<4)return{fail:'lines',mask,lines,nLines:lines.length};
+  if(lines.length<4&&!opt.init)return{fail:'lines',mask,lines,nLines:lines.length};
   let best=null;
   const fam=[[],[]];
   // family A: lines nearly parallel to the strongest line (in the image, transverse lines stay roughly parallel);
   // family B: the rest (longitudinal lines converge in perspective, so their angles differ a lot)
-  {const a0=dir(lines[0]);for(const l of lines){const d=Math.abs(Math.sin(dir(l)-a0));(d<Math.sin(14*Math.PI/180)?fam[0]:fam[1]).push(l)}}
+  if(lines.length){const a0=dir(lines[0]);for(const l of lines){const d=Math.abs(Math.sin(dir(l)-a0));(d<Math.sin(14*Math.PI/180)?fam[0]:fam[1]).push(l)}}
   // dilated mask for scoring
   const dil=new Uint8Array(n);for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x;if(mask[i]||mask[i-1]||mask[i+1]||mask[i-W]||mask[i+W])dil[i]=1}
   const inter=(p,q)=>{const d=p.a*q.b-p.b*q.a;if(Math.abs(d)<1e-6)return null;return[(p.c*q.b-p.b*q.c)/d,(p.a*q.c-p.c*q.a)/d]};
@@ -1606,7 +1609,8 @@ function detectCourt(rgba,W,H,opt){
       for(let j=0;j<=k;j++){const u=j/k,p=proj(Hm,s[0]+u*(s[2]-s[0]),s[1]+u*(s[3]-s[1]));if(!p)return -1e9;const x=Math.round(p[0]),y=Math.round(p[1]);if(x<1||y<1||x>=W-1||y>=H-1)continue;const i=y*W+x;if(stamp[i]===sid)continue;stamp[i]=sid;if(dil[i])hit++;else miss++}}
     return hit-0.5*miss};
   const take=(f,k)=>f.slice().sort((a,b)=>b.v-a.v).slice(0,k);
-  for(const swap of[0,1]){const FT=take(fam[swap],7),FL=take(fam[1-swap],7);
+  // opt.init = {H,k}: skip the search and only refine (snap a rough manual calibration onto the lines)
+  if(!opt.init)for(const swap of[0,1]){const FT=take(fam[swap],7),FL=take(fam[1-swap],7);
     for(let i=0;i<FT.length;i++)for(let j=i+1;j<FT.length;j++)for(let k=0;k<FL.length;k++)for(let l=k+1;l<FL.length;l++){
       const P=[inter(FT[i],FL[k]),inter(FT[i],FL[l]),inter(FT[j],FL[k]),inter(FT[j],FL[l])];if(P.some(p=>!p))continue;
       if(P.some(p=>p[0]<-W||p[0]>2*W||p[1]<-H||p[1]>2*H))continue;
@@ -1619,10 +1623,11 @@ function detectCourt(rgba,W,H,opt){
         const nb=proj(Hm,0,0),fb=proj(Hm,0,CL);if(!nb||!fb||nb[1]<=fb[1])continue;
         const nl=proj(Hm,-HW,0),nr=proj(Hm,HW,0);if(!nl||!nr||Math.hypot(nr[0]-nl[0],nr[1]-nl[1])<W/8)continue;
         const sc=score(Hm);if(!best||sc>best.sc)best={sc,Hm}}}}}
+  if(opt.init)best={sc:0,Hm:opt.init.H};
   if(!best)return{fail:'fit',mask,lines,nLines:lines.length,fam:fam.map(f=>f.length)};
   // 4. refine homography AND lens curvature (wide-angle lenses bend straight lines near the image edges).
   // Lens model: one-parameter division model; Hm maps court metres to UNDISTORTED pixels, lensDist() bends them into the image.
-  let Hm=best.Hm,K=0;
+  let Hm=best.Hm,K=opt.init&&opt.init.k||0;
   const projD=(Hm_,k,x,y)=>{const p=proj(Hm_,x,y);return p?lensDist(k,W,H,p[0],p[1]):null};
   const quality=(Hm_,k)=>{let hit=0,tot=0;for(const s of SEG){const n_=60;for(let j=0;j<=n_;j++){const u=j/n_,p=projD(Hm_,k,s[0]+u*(s[2]-s[0]),s[1]+u*(s[3]-s[1]));if(!p)continue;const x=Math.round(p[0]),y=Math.round(p[1]);if(x<1||y<1||x>=W-1||y>=H-1)continue;tot++;if(dil[y*W+x])hit++}}return{q:tot?hit/tot:0,hit}};
   const MODEL=[{t:0,x0:-HW,x1:HW},{t:SV,x0:-SHW,x1:SHW},{t:CL-SV,x0:-SHW,x1:SHW},{t:CL,x0:-HW,x1:HW},{x:-HW},{x:-SHW},{x:SHW},{x:HW},{x:0,y0:SV,y1:CL-SV}];
@@ -1631,7 +1636,7 @@ function detectCourt(rgba,W,H,opt){
     // collect line pixels along each (bent) model line, in image coordinates
     const groups=[];
     for(const m of MODEL){const a0=m.t!=null?[m.x0,m.t]:[m.x,m.y0!=null?m.y0:0],a1=m.t!=null?[m.x1,m.t]:[m.x,m.y1!=null?m.y1:CL];
-      const samp=[],N=120,R=it===0?8:5;
+      const samp=[],N=120,R=it===0?(opt.init?14:8):5;
       for(let j=0;j<=N;j++){const u=j/N,P=(uu)=>projD(Hm,K,a0[0]+uu*(a1[0]-a0[0]),a0[1]+uu*(a1[1]-a0[1]));const p=P(u),q=P(Math.min(1,u+0.005)),q0=P(Math.max(0,u-0.005));if(!p||!q||!q0)continue;
         const dx=q[0]-q0[0],dy=q[1]-q0[1],dl=Math.hypot(dx,dy);if(dl<1e-6)continue;const nx=-dy/dl,ny=dx/dl;let sw=0,sx=0,sy=0;
         for(let s=-R;s<=R;s++){const x=Math.round(p[0]+nx*s),y=Math.round(p[1]+ny*s);if(x<0||y<0||x>=W||y>=H)continue;if(mask[y*W+x]){sw++;sx+=p[0]+nx*s;sy+=p[1]+ny*s}}
@@ -1658,7 +1663,7 @@ function detectCourt(rgba,W,H,opt){
         if(cq<c0){p=q;r=rq;c0=cq;lam=Math.max(1e-7,lam/3);improved=true}else lam*=10}
       if(!improved)break}
     const Hn=p.slice(0,8).concat([1]),bk=p[8];
-    const nq=quality(Hn,bk);if(nq.hit<cur.hit*0.98)break;
+    const nq=quality(Hn,bk);if(nq.hit<cur.hit*(opt.init&&it===0?0.9:0.98))break;
     const done=Math.abs(bk-K)<0.002&&nq.hit<=cur.hit;Hm=Hn;K=bk;cur=nq;if(done)break}
   const corner=(x,y)=>{const p=projD(Hm,K,x,y);return{x:p[0]/W,y:p[1]/H}};
   return{pts:[corner(-HW,0),corner(HW,0),corner(HW,CL),corner(-HW,CL)],k:K,H:Hm,score:best.sc,quality:cur.q,nLines:lines.length,mask,lines};
@@ -1684,9 +1689,11 @@ function cSolve8(A,b){A=A.map(r=>r.slice());b=b.slice();
   const h=b.map((x,i)=>x/A[i][i]);return[h[0],h[1],h[2],h[3],h[4],h[5],h[6],h[7],1]}
 /*COURT-DETECT-END*/
 // automatic calibration: median of a few frames (removes moving players), then detect the lines
-async function autoCalibrate(silent){
+// snap=true: keep the current (rough) calibration as a start and only pull it onto the white lines
+async function autoCalibrate(silent,snap){
   if(!hasVideo()||state.exporting||state.calBusy)return false;
-  state.calBusy=true;const btn=$('#bCalAuto');if(btn)btn.disabled=true;
+  if(snap&&!state.court){toast('Zet eerst de baan (automatisch of met de hand)');return false}
+  state.calBusy=true;const btn=$('#bCalAuto'),btn2=$('#bCalSnap');if(btn)btn.disabled=true;if(btn2)btn2.disabled=true;
   const wasPaused=v.paused,t0=v.currentTime;v.pause();
   try{
     const W=960,H=Math.round(960*v.videoHeight/v.videoWidth),cv=document.createElement('canvas');cv.width=W;cv.height=H;const cx=cv.getContext('2d',{willReadFrequently:true});
@@ -1695,18 +1702,21 @@ async function autoCalibrate(silent){
     const med=new Uint8ClampedArray(W*H*4),k=frames.length,tmp=new Array(k);
     for(let i=0;i<med.length;i++){if((i&3)===3){med[i]=255;continue}for(let j=0;j<k;j++)tmp[j]=frames[j][i];tmp.sort((a,b)=>a-b);med[i]=tmp[k>>1]}
     // try the median image and the current frame; keep the best fit
-    let best=null;for(const img of[med,frames[0]]){const r=detectCourt(img,W,H);if(r&&!r.fail&&(!best||r.quality*r.score>best.quality*best.score))best=r}
+    let init=null;
+    if(snap){const c=state.court,k=fin(c.k)?c.k:0,img=c.pts.map(p=>lensUndist(k,W,H,p.x*W,p.y*H));init={H:solveH(courtRefPts(c.mode),img),k}}
+    let best=null;for(const img of[med,frames[0]]){const r=detectCourt(img,W,H,init?{init}:undefined);if(r&&!r.fail&&(!best||(init?r.quality>best.quality:r.quality*r.score>best.quality*best.score)))best=r}
     await seek(t0);if(!wasPaused)v.play().catch(()=>{});
-    if(!best||best.quality<0.35){if(!silent)toast('Baanlijnen niet gevonden. Kalibreer met de hand (4 punten).',5000);return false}
+    if(!best||best.quality<0.35){if(!silent)toast(snap?'Vastklikken lukt niet: te weinig lijnen gevonden bij deze punten. Zet ze iets preciezer en probeer opnieuw.':'Baanlijnen niet gevonden. Kalibreer met de hand (4 punten).',5000);return false}
     state.court={pts:best.pts.map(p=>({x:+p.x.toFixed(5),y:+p.y.toFixed(5)})),mode:'baseline',auto:true,q:+best.quality.toFixed(2),k:+(best.k||0).toFixed(4)};
     for(const c of state.clips)if(c.ball)c.ball.stale=true;
     persist();renderCal();if(window.__renderOverlay)window.__renderOverlay();renderBall();
-    toast('Baan automatisch gekalibreerd ('+Math.round(best.quality*100)+'% van de lijnen gevonden). Klopt het niet? Gebruik “Punten bijstellen”.',5000);
+    toast(snap?'Vastgeklikt op de lijnen ('+Math.round(best.quality*100)+'% van de lijnen gevonden).':'Baan automatisch gekalibreerd ('+Math.round(best.quality*100)+'% van de lijnen gevonden). Klopt het niet? Gebruik “Fijn afstellen”.',5000);
     return true;
   }catch(e){console.error(e);if(!silent)toast('Automatisch kalibreren mislukt: '+e.message,5000);return false}
-  finally{state.calBusy=false;if(btn)btn.disabled=false}
+  finally{state.calBusy=false;if(btn)btn.disabled=false;if(btn2)btn2.disabled=false}
 }
 $('#bCalAuto').onclick=()=>autoCalibrate(false);
+$('#bCalSnap').onclick=()=>autoCalibrate(false,true);
 // on opening a video without calibration: calibrate automatically once the first frame is there
 v.addEventListener('loadeddata',()=>{if(!state.court)setTimeout(()=>{if(!state.court)autoCalibrate(true)},300)});
 $('#calMode').addEventListener('change',e=>e.target.blur());
@@ -1953,15 +1963,27 @@ $('#bCalEdit').onclick=()=>{if(!state.court){toast('Kalibreer eerst de baan');re
 function calHit(p){const r=layer.getBoundingClientRect();let best=-1,bd=28;state.court.pts.forEach((q,i)=>{const d=Math.hypot((q.x-p.x)*r.width,(q.y-p.y)*r.height);if(d<bd){bd=d;best=i}});return best}
 window.__calEditDown=(e,p)=>{const i=calHit(p);if(i<0)return false;state.calSel=i;calDrag=i;layer.setPointerCapture(e.pointerId);renderCal();return true};
 layer.addEventListener('pointermove',e=>{if(calDrag<0)return;const p=relPt(e);state.court.pts[calDrag]={x:p.x,y:p.y}});
-const calEnd=()=>{if(calDrag<0)return;calDrag=-1;for(const c of state.clips)if(c.ball)c.ball.stale=true;persist();renderBall()};
+const calEnd=()=>{if(calDrag<0)return;calDrag=-1;state.court.edited=true;renderCal();for(const c of state.clips)if(c.ball)c.ball.stale=true;persist();renderBall()};
 layer.addEventListener('pointerup',calEnd);layer.addEventListener('pointercancel',calEnd);
-window.__calNudge=(dx,dy)=>{if(!state.calEdit||state.calSel<0)return false;const q=state.court.pts[state.calSel];q.x=clamp(q.x+dx/v.videoWidth,0,1);q.y=clamp(q.y+dy/v.videoHeight,0,1);
-  for(const c of state.clips)if(c.ball)c.ball.stale=true;persist();return true};
+window.__calNudge=(dx,dy)=>{if(!state.calEdit||state.calSel<0)return false;const q=state.court.pts[state.calSel];q.x=clamp(q.x+dx/v.videoWidth,-1,2);q.y=clamp(q.y+dy/v.videoHeight,-1,2);// a far corner may lie outside the picture
+  state.court.edited=true;for(const c of state.clips)if(c.ball)c.ball.stale=true;persist();renderCal();return true};
 OVERLAYS.push((ctx,w,h,dpr)=>{if(!state.calEdit||!state.court)return;
   state.court.pts.forEach((q,i)=>{const sel=i===state.calSel;ctx.strokeStyle=sel?'#d4f53c':'#fff';ctx.lineWidth=2*dpr;ctx.beginPath();ctx.arc(q.x*w,q.y*h,(sel?9:7)*dpr,0,7);ctx.stroke();
     ctx.beginPath();ctx.moveTo(q.x*w-14*dpr,q.y*h);ctx.lineTo(q.x*w+14*dpr,q.y*h);ctx.moveTo(q.x*w,q.y*h-14*dpr);ctx.lineTo(q.x*w,q.y*h+14*dpr);ctx.stroke();
     pill(ctx,String(i+1),q.x*w+18*dpr,q.y*h-16*dpr,12*dpr,sel?'#d4f53c':'#fff')});
-  pill(ctx,'Sleep een punt of gebruik de pijltjes (Shift = 5 px) · Tab = volgend punt · Esc/Enter = klaar',w/2,24*dpr,12*dpr,'#fff')});
+  // loupe: 5x enlargement around the selected point, with the court lines, so single-pixel moves are visible
+  const q=state.court.pts[state.calSel];
+  if(q&&hasVideo()){const W=v.videoWidth,H=v.videoHeight,Z=5,S=Math.round(170*dpr),half=S/Z/2*(W/w),cx=q.x*W,cy=q.y*H;
+    const ox=q.x<0.5?w-S-12*dpr:12*dpr,oy=q.y<0.5?h-S-12*dpr:44*dpr;
+    ctx.save();ctx.beginPath();ctx.rect(ox,oy,S,S);ctx.clip();ctx.imageSmoothingEnabled=false;
+    try{ctx.drawImage(v,cx-half,cy-half,2*half,2*half,ox,oy,S,S)}catch(e){}
+    const toL=(x,y)=>[ox+(x-(cx-half))/(2*half)*S,oy+(y-(cy-half))/(2*half)*S];
+    const ch=courtH();if(ch&&ch.toImg){ctx.strokeStyle='rgba(96,165,250,.9)';ctx.lineWidth=1.5*dpr;const{L,HW,SHW,SV}=CRT;
+      for(const s of[[-HW,0,HW,0],[-HW,L,HW,L],[-HW,0,-HW,L],[HW,0,HW,L],[-SHW,0,-SHW,L],[SHW,0,SHW,L],[-SHW,SV,SHW,SV],[-SHW,L-SV,SHW,L-SV],[0,SV,0,L-SV]]){
+        ctx.beginPath();for(let i=0;i<=60;i++){const u=i/60,P=applyH(ch.toImg,s[0]+u*(s[2]-s[0]),s[1]+u*(s[3]-s[1])),Q=toL(P[0],P[1]);i?ctx.lineTo(Q[0],Q[1]):ctx.moveTo(Q[0],Q[1])}ctx.stroke()}}
+    ctx.strokeStyle='#d4f53c';ctx.lineWidth=1*dpr;ctx.beginPath();ctx.moveTo(ox+S/2,oy);ctx.lineTo(ox+S/2,oy+S);ctx.moveTo(ox,oy+S/2);ctx.lineTo(ox+S,oy+S/2);ctx.stroke();
+    ctx.restore();ctx.strokeStyle='#d4f53c';ctx.lineWidth=2*dpr;ctx.strokeRect(ox,oy,S,S);pill(ctx,'punt '+(state.calSel+1)+' · 5×',ox+S/2,oy+14*dpr,11*dpr,'#d4f53c')}
+  pill(ctx,'Sleep een punt of gebruik de pijltjes (Shift = 5 px) · Tab = volgend punt · daarna “Vastklikken op lijnen” · Esc/Enter = klaar',w/2,24*dpr,12*dpr,'#fff')});
 
 
 

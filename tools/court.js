@@ -55,12 +55,12 @@ function detectCourt(rgba,W,H,opt){
     lines.push({a,b,c,v:p.v})}
   // 3. split into two direction families
   const dir=l=>Math.atan2(l.a,-l.b);// line direction angle
-  if(lines.length<4)return{fail:'lines',mask,lines,nLines:lines.length};
+  if(lines.length<4&&!opt.init)return{fail:'lines',mask,lines,nLines:lines.length};
   let best=null;
   const fam=[[],[]];
   // family A: lines nearly parallel to the strongest line (in the image, transverse lines stay roughly parallel);
   // family B: the rest (longitudinal lines converge in perspective, so their angles differ a lot)
-  {const a0=dir(lines[0]);for(const l of lines){const d=Math.abs(Math.sin(dir(l)-a0));(d<Math.sin(14*Math.PI/180)?fam[0]:fam[1]).push(l)}}
+  if(lines.length){const a0=dir(lines[0]);for(const l of lines){const d=Math.abs(Math.sin(dir(l)-a0));(d<Math.sin(14*Math.PI/180)?fam[0]:fam[1]).push(l)}}
   // dilated mask for scoring
   const dil=new Uint8Array(n);for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x;if(mask[i]||mask[i-1]||mask[i+1]||mask[i-W]||mask[i+W])dil[i]=1}
   const inter=(p,q)=>{const d=p.a*q.b-p.b*q.a;if(Math.abs(d)<1e-6)return null;return[(p.c*q.b-p.b*q.c)/d,(p.a*q.c-p.c*q.a)/d]};
@@ -76,7 +76,8 @@ function detectCourt(rgba,W,H,opt){
       for(let j=0;j<=k;j++){const u=j/k,p=proj(Hm,s[0]+u*(s[2]-s[0]),s[1]+u*(s[3]-s[1]));if(!p)return -1e9;const x=Math.round(p[0]),y=Math.round(p[1]);if(x<1||y<1||x>=W-1||y>=H-1)continue;const i=y*W+x;if(stamp[i]===sid)continue;stamp[i]=sid;if(dil[i])hit++;else miss++}}
     return hit-0.5*miss};
   const take=(f,k)=>f.slice().sort((a,b)=>b.v-a.v).slice(0,k);
-  for(const swap of[0,1]){const FT=take(fam[swap],7),FL=take(fam[1-swap],7);
+  // opt.init = {H,k}: skip the search and only refine (snap a rough manual calibration onto the lines)
+  if(!opt.init)for(const swap of[0,1]){const FT=take(fam[swap],7),FL=take(fam[1-swap],7);
     for(let i=0;i<FT.length;i++)for(let j=i+1;j<FT.length;j++)for(let k=0;k<FL.length;k++)for(let l=k+1;l<FL.length;l++){
       const P=[inter(FT[i],FL[k]),inter(FT[i],FL[l]),inter(FT[j],FL[k]),inter(FT[j],FL[l])];if(P.some(p=>!p))continue;
       if(P.some(p=>p[0]<-W||p[0]>2*W||p[1]<-H||p[1]>2*H))continue;
@@ -89,10 +90,11 @@ function detectCourt(rgba,W,H,opt){
         const nb=proj(Hm,0,0),fb=proj(Hm,0,CL);if(!nb||!fb||nb[1]<=fb[1])continue;
         const nl=proj(Hm,-HW,0),nr=proj(Hm,HW,0);if(!nl||!nr||Math.hypot(nr[0]-nl[0],nr[1]-nl[1])<W/8)continue;
         const sc=score(Hm);if(!best||sc>best.sc)best={sc,Hm}}}}}
+  if(opt.init)best={sc:0,Hm:opt.init.H};
   if(!best)return{fail:'fit',mask,lines,nLines:lines.length,fam:fam.map(f=>f.length)};
   // 4. refine homography AND lens curvature (wide-angle lenses bend straight lines near the image edges).
   // Lens model: one-parameter division model; Hm maps court metres to UNDISTORTED pixels, lensDist() bends them into the image.
-  let Hm=best.Hm,K=0;
+  let Hm=best.Hm,K=opt.init&&opt.init.k||0;
   const projD=(Hm_,k,x,y)=>{const p=proj(Hm_,x,y);return p?lensDist(k,W,H,p[0],p[1]):null};
   const quality=(Hm_,k)=>{let hit=0,tot=0;for(const s of SEG){const n_=60;for(let j=0;j<=n_;j++){const u=j/n_,p=projD(Hm_,k,s[0]+u*(s[2]-s[0]),s[1]+u*(s[3]-s[1]));if(!p)continue;const x=Math.round(p[0]),y=Math.round(p[1]);if(x<1||y<1||x>=W-1||y>=H-1)continue;tot++;if(dil[y*W+x])hit++}}return{q:tot?hit/tot:0,hit}};
   const MODEL=[{t:0,x0:-HW,x1:HW},{t:SV,x0:-SHW,x1:SHW},{t:CL-SV,x0:-SHW,x1:SHW},{t:CL,x0:-HW,x1:HW},{x:-HW},{x:-SHW},{x:SHW},{x:HW},{x:0,y0:SV,y1:CL-SV}];
@@ -101,7 +103,7 @@ function detectCourt(rgba,W,H,opt){
     // collect line pixels along each (bent) model line, in image coordinates
     const groups=[];
     for(const m of MODEL){const a0=m.t!=null?[m.x0,m.t]:[m.x,m.y0!=null?m.y0:0],a1=m.t!=null?[m.x1,m.t]:[m.x,m.y1!=null?m.y1:CL];
-      const samp=[],N=120,R=it===0?8:5;
+      const samp=[],N=120,R=it===0?(opt.init?14:8):5;
       for(let j=0;j<=N;j++){const u=j/N,P=(uu)=>projD(Hm,K,a0[0]+uu*(a1[0]-a0[0]),a0[1]+uu*(a1[1]-a0[1]));const p=P(u),q=P(Math.min(1,u+0.005)),q0=P(Math.max(0,u-0.005));if(!p||!q||!q0)continue;
         const dx=q[0]-q0[0],dy=q[1]-q0[1],dl=Math.hypot(dx,dy);if(dl<1e-6)continue;const nx=-dy/dl,ny=dx/dl;let sw=0,sx=0,sy=0;
         for(let s=-R;s<=R;s++){const x=Math.round(p[0]+nx*s),y=Math.round(p[1]+ny*s);if(x<0||y<0||x>=W||y>=H)continue;if(mask[y*W+x]){sw++;sx+=p[0]+nx*s;sy+=p[1]+ny*s}}
@@ -128,7 +130,7 @@ function detectCourt(rgba,W,H,opt){
         if(cq<c0){p=q;r=rq;c0=cq;lam=Math.max(1e-7,lam/3);improved=true}else lam*=10}
       if(!improved)break}
     const Hn=p.slice(0,8).concat([1]),bk=p[8];
-    const nq=quality(Hn,bk);if(nq.hit<cur.hit*0.98)break;
+    const nq=quality(Hn,bk);if(nq.hit<cur.hit*(opt.init&&it===0?0.9:0.98))break;
     const done=Math.abs(bk-K)<0.002&&nq.hit<=cur.hit;Hm=Hn;K=bk;cur=nq;if(done)break}
   const corner=(x,y)=>{const p=projD(Hm,K,x,y);return{x:p[0]/W,y:p[1]/H}};
   return{pts:[corner(-HW,0),corner(HW,0),corner(HW,CL),corner(-HW,CL)],k:K,H:Hm,score:best.sc,quality:cur.q,nLines:lines.length,mask,lines};

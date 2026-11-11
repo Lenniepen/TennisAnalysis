@@ -29,6 +29,17 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await ev("showTab&&showTab('ball');1");await sleep(500);
     const shot=await send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(outDir,'e2e_'+path.basename(vid)+'.png'),Buffer.from(shot.result.data,'base64'));
     console.log('toast:',await ev("(document.querySelector('#toast')||{}).textContent||''"));
+    if(process.env.FINETUNE){
+      // fine-tune: open edit mode, push point 2 (near right) 6x Shift+Right = 30 px off, screenshot with loupe, then snap back
+      await ev("document.querySelector('#bCalEdit').click();1");await sleep(300);
+      const key=(k,shift)=>ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'${k}',shiftKey:${shift},bubbles:true}));1`);
+      await key('Tab',false);for(let i=0;i<6;i++)await key('ArrowRight',true);await sleep(600);
+      let shot=await send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(outDir,'e2e_fine_'+path.basename(vid)+'.png'),Buffer.from(shot.result.data,'base64'));
+      console.log('na verschuiven:',await ev("document.querySelector('#calInfo').textContent"));
+      await key('Enter',false);await ev("document.querySelector('#bCalSnap').click();1");
+      for(let i=0;i<60;i++){await sleep(250);const t=await ev("(document.querySelector('#toast')||{}).textContent||''");if(/Vastgeklikt|lukt niet/.test(t)){console.log('snap:',t);break}}
+      await sleep(800);shot=await send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(outDir,'e2e_snap_'+path.basename(vid)+'.png'),Buffer.from(shot.result.data,'base64'));
+    }
   }
   console.log(logs.filter(l=>/EXC|error/i.test(l)).slice(0,10).join('\n')||'geen fouten in console');
   ws.close();cp.kill();srv.close();setTimeout(()=>process.exit(0),500);
