@@ -237,6 +237,8 @@ details li{margin:2px 0}
         <button class="btn" id="bSaveJson" style="flex:1">Markers opslaan</button>
         <label class="btn" style="flex:1;text-align:center">Markers laden<input type="file" id="jsonIn" accept=".json,application/json" hidden></label>
       </div>
+      <button class="btn" id="bAuto" title="Bewaar markers, raakmomenten, speler en kalibratie bij elke wijziging in een bestand naast je video">Automatisch opslaan in bestand…</button>
+      <div class="note" id="autoInfo"></div>
     </div>
     <div class="note" id="dlNote">Export neemt de clips in realtime op (zonder geluid). Houd dit tabblad zichtbaar tijdens het exporteren. De filter bij Clips bepaalt welke clips meegaan.</div>
   </div>
@@ -258,7 +260,7 @@ details li{margin:2px 0}
         <li><kbd>W</kbd> speler kiezen: alle spelers krijgen een nummer, klik op jezelf. Geldt voor nieuwe clips, of voor de geselecteerde clip. Een uitsnede heeft voorrang.</li>
         <li><kbd>Y</kbd> kaders om alle spelers, met een vast nummer per speler; de gekozen speler is groen</li>
         <li><kbd>K</kbd> skelet tonen · <kbd>T</kbd> raakmoment van geselecteerde clip op huidige tijd</li>
-        <li>Je markers en analyses worden per videobestand in deze browser onthouden.</li>
+        <li>Je markers worden per videobestand in <b>deze browser en deze versie</b> onthouden (de Claude- en GitHub-versie delen dat niet). Zekerder: “Automatisch opslaan in bestand…” (GitHub-versie, Chrome/Edge), of af en toe “Markers opslaan”. Met “Markers laden” zet je alles terug, inclusief raakmomenten.</li>
       </ul>
       <div style="display:grid;grid-template-columns:auto auto;gap:6px 10px;margin-top:10px;font-size:13px;align-items:center">
         <span style="color:var(--mut)">Tijd vóór raakmoment (s)</span><input type="number" id="pre" step="0.25" min="0" value="1.5">
@@ -355,7 +357,7 @@ SETTINGS.concat(['ovl']).forEach(k=>$('#'+k).addEventListener('change',()=>{save
 
 /* ---------- file loading ---------- */
 function storeKey(){return state.file?'tcp:clips:'+state.file.name+':'+state.file.size:null}
-function persist(){const k=storeKey();if(k)lsSet(k,{clips:state.clips,crop:state.crop,target:state.target,court:state.court})}
+function persist(){const k=storeKey();if(k)lsSet(k,{clips:state.clips,crop:state.crop,target:state.target,court:state.court});if(window.__autoSave)window.__autoSave()}
 function loadFile(f){
   if(!f)return;
   if(state.url)URL.revokeObjectURL(state.url);
@@ -369,6 +371,8 @@ function loadFile(f){
   $('#fname').textContent=f.name+' · '+(f.size/1048576).toFixed(0)+' MB';
   render();
   if(state.clips.length)toast(state.clips.length+' eerder gemaakte clips teruggezet');
+  else toast('Nog geen markers voor deze video in deze browser. Heb je een markers-bestand? Kies dan “Markers laden”.',5000);
+  AUTO.h=null;if($('#autoInfo'))$('#autoInfo').textContent='';
 }
 v.addEventListener('loadedmetadata',()=>{stage.style.setProperty('--ar',(v.videoWidth/v.videoHeight).toFixed(4));$('#empty').style.display='none';render()});
 /* auto-detect source framerate from presented frames while playing */
@@ -555,7 +559,7 @@ function renderList(){
   for(const c of list){
     const L=LABELS[c.label];const li=document.createElement('li');li.dataset.id=c.id;li.style.setProperty('--c',L.color);if(c.id===state.sel)li.className='sel';
     const opts=Object.keys(LABELS).map(k=>'<option value="'+k+'"'+(k===c.label?' selected':'')+'>'+LABELS[k].name+'</option>').join('');
-    li.innerHTML='<div class="top"><b>#'+indexOf(c)+'</b><select data-a="label">'+opts+'</select><span>'+numberOf(c)+'</span>'+(c.crop?' <span title="Heeft uitsnede">✂️</span>':'')+'<span class="tm">'+fmt(c.t0)+' → '+fmt(c.t1)+' ('+(c.t1-c.t0).toFixed(1)+'s)</span></div>'+
+    li.innerHTML='<div class="top"><b>#'+indexOf(c)+'</b><select data-a="label">'+opts+'</select><span>'+numberOf(c)+'</span>'+(c.crop?' <span title="Heeft uitsnede">✂️</span>':'')+'<span class="tm">'+(Number.isFinite(c.tcManual)?'<span title="Raakmoment met T vastgezet" style="color:#d4f53c">◎ '+fmt(c.tcManual)+'</span>':fmt(c.t0)+' → '+fmt(c.t1)+' ('+(c.t1-c.t0).toFixed(1)+'s)')+'</span></div>'+
       '<div class="bot"><button class="btn sm" data-a="play" title="Afspelen (P)">▶</button>'+
       '<span class="lb">begin</span><button class="btn sm" data-a="in-">−</button><button class="btn sm" data-a="in+">+</button>'+
       '<span class="lb">einde</span><button class="btn sm" data-a="out-">−</button><button class="btn sm" data-a="out+">+</button>'+
@@ -780,17 +784,29 @@ $('#bFfmpeg').onclick=()=>{const list=visibleClips();if(!list.length)return;$('#
 $('#dlgClose').onclick=closeDlg;
 $('#dlgCopy').onclick=async()=>{const t=$('#dlgText');try{await navigator.clipboard.writeText(t.value);toast('Gekopieerd')}catch(e){t.focus();t.select();toast('Geselecteerd; druk Ctrl+C om te kopiëren')}};
 $('#dlgSave').onclick=()=>offerFile($('#dlgText').value,base()+'_ffmpeg.txt');
-$('#bSaveJson').onclick=()=>{
-  const data={app:'tennisclip-knipper',version:1,file:state.file&&state.file.name,size:state.file&&state.file.size,width:v.videoWidth,height:v.videoHeight,crop:state.crop,
-    clips:state.clips.map(c=>({...c,name:LABELS[c.label].name+' '+numberOf(c)}))};
-  offerFile(JSON.stringify(data,null,2),base()+'_markers.json');
+function markersJSON(){
+  return JSON.stringify({app:'tennisclip-knipper',version:2,file:state.file&&state.file.name,size:state.file&&state.file.size,width:v.videoWidth,height:v.videoHeight,
+    crop:state.crop,target:state.target,court:state.court,saved:new Date().toISOString(),
+    clips:state.clips.map(c=>({...c,name:LABELS[c.label].name+' '+numberOf(c)}))},null,2);
+}
+$('#bSaveJson').onclick=()=>offerFile(markersJSON(),base()+'_markers.json');
+/* automatic backup to a file you choose (Chrome/Edge; works in the GitHub version, not inside the Claude app frame) */
+const AUTO={h:null,t:null};
+async function writeAuto(){if(!AUTO.h)return;try{const w=await AUTO.h.createWritable();await w.write(markersJSON());await w.close();$('#autoInfo').textContent='Automatisch opgeslagen in '+AUTO.h.name+' ('+new Date().toLocaleTimeString('nl-NL')+')'}catch(e){$('#autoInfo').textContent='Automatisch opslaan mislukt: kies het bestand opnieuw';AUTO.h=null}}
+window.__autoSave=()=>{if(!AUTO.h)return;clearTimeout(AUTO.t);AUTO.t=setTimeout(writeAuto,800)};
+$('#bAuto').onclick=async()=>{
+  if(!state.file){toast('Open eerst een video');return}
+  if(!window.showSaveFilePicker){toast('Dit kan alleen in Chrome of Edge, en niet binnen de Claude-app. Gebruik de GitHub-versie, of “Markers opslaan”.',6000);return}
+  try{AUTO.h=await window.showSaveFilePicker({suggestedName:base()+'_markers.json',types:[{description:'Markers',accept:{'application/json':['.json']}}]});await writeAuto()}
+  catch(e){if(e&&e.name!=='AbortError')toast('Een bestand kiezen lukt hier niet. Gebruik de GitHub-versie, of “Markers opslaan”.',6000)}
 };
 $('#jsonIn').addEventListener('change',async e=>{
   const f=e.target.files[0];e.target.value='';if(!f)return;
   try{
     const d=JSON.parse(await f.text());if(!Array.isArray(d.clips))throw 0;
-    const clips=d.clips.filter(c=>LABELS[c.label]&&isFinite(c.t0)&&isFinite(c.t1)&&c.t1>c.t0).map(c=>({id:uid(),label:c.label,t0:+c.t0,t1:+c.t1,crop:c.crop&&isFinite(c.crop.x)?{x:+c.crop.x,y:+c.crop.y,w:+c.crop.w,h:+c.crop.h}:null,tcManual:Number.isFinite(+c.tcManual)&&c.tcManual!=null?+c.tcManual:undefined}));
-    snapshot();state.clips=clips;sortClips();if(d.crop)state.crop=d.crop;state.sel=null;persist();render();
+    const clips=d.clips.filter(c=>LABELS[c.label]&&isFinite(c.t0)&&isFinite(c.t1)&&c.t1>c.t0).map(c=>({id:uid(),label:c.label,t0:+c.t0,t1:+c.t1,crop:c.crop&&isFinite(c.crop.x)?{x:+c.crop.x,y:+c.crop.y,w:+c.crop.w,h:+c.crop.h}:null,
+      target:c.target&&isFinite(c.target.x)?{x:+c.target.x,y:+c.target.y,h:+c.target.h}:null,tcManual:c.tcManual!=null&&Number.isFinite(+c.tcManual)?+c.tcManual:undefined}));
+    snapshot();state.clips=clips;sortClips();if(d.crop)state.crop=d.crop;if(d.target)state.target=d.target;if(d.court&&d.court.pts&&d.court.pts.length===4)state.court=d.court;state.sel=null;persist();render();
     toast(clips.length+' clips geladen'+(state.file&&d.file&&d.file!==state.file.name?' (gemaakt voor '+d.file+')':''),4000);
   }catch(err){toast('Dit is geen geldig markers-bestand')}
 });
@@ -1176,13 +1192,15 @@ function findContact(frames){
   return bi;
 }
 async function analyzeClip(c,prog){
-  const frames=await scanFrames(c.crop,c.t0,c.t1,prog,c.target);if(!frames)return false;
+  const hasM=fin(c.tcManual);
+  const ta=hasM?Math.max(0,Math.min(c.t0,c.tcManual-0.8)):c.t0,tb=hasM?Math.min(v.duration||c.t1,Math.max(c.t1,c.tcManual+0.5)):c.t1;
+  const frames=await scanFrames(c.crop,ta,tb,prog,c.target);if(!frames)return false;
   let bi=-1,manual=false;
-  if(fin(c.tcManual)&&c.tcManual>=c.t0&&c.tcManual<=c.t1){
-    frames.forEach((f,i)=>{if(f.P&&(bi<0||Math.abs(f.t-c.tcManual)<Math.abs(frames[bi].t-c.tcManual)))bi=i});manual=bi>=0}
+  if(hasM){frames.forEach((f,i)=>{if(f.P&&Math.abs(f.t-c.tcManual)<=0.15&&(bi<0||Math.abs(f.t-c.tcManual)<Math.abs(frames[bi].t-c.tcManual)))bi=i});manual=true}
   if(bi<0)bi=findContact(frames);
   if(bi<0){const tgt=c.t0+(c.t1-c.t0)*0.55;bi=frames.findIndex(f=>f.P&&f.t>=tgt)}
   c.ana=bi>=0?buildAna(frames,bi,!manual):{failed:true};
+  if(manual&&c.ana&&!c.ana.failed){c.ana.tc=c.tcManual;c.ana.auto=false}// the moment you chose is the moment shown
   return true;
 }
 $('#bAnalyze').onclick=async()=>{
@@ -1203,10 +1221,13 @@ async function setContactHere(){
   const c=getClip(state.sel);if(!c){toast('Selecteer eerst een clip');return}
   try{await loadPose()}catch(e){return}
   const t=v.currentTime;
-  const r=await runExport('Raakmoment meten',async prog=>{const fr=await scanFrames(c.crop,Math.max(c.t0,t-0.8),Math.min(c.t1,t+0.5),prog,c.target);return fr});
+  const r=await runExport('Raakmoment meten',async prog=>{const fr=await scanFrames(c.crop,Math.max(0,t-0.8),Math.min(v.duration,t+0.5),prog,c.target);return fr});
   if(!r)return;
-  let bi=0;r.forEach((f,i)=>{if(Math.abs(f.t-t)<Math.abs(r[bi].t-t))bi=i});if(!r[bi].P){toast('Geen persoon gevonden op dit moment');return}
-  snapshot();c.tcManual=t;c.ana=buildAna(r,bi,false);persist();render();seekTo(t);flash('Raakmoment '+fmt(t)+' vastgezet');
+  snapshot();c.tcManual=t;
+  let bi=-1;r.forEach((f,i)=>{if(f.P&&Math.abs(f.t-t)<=0.15&&(bi<0||Math.abs(f.t-t)<Math.abs(r[bi].t-t)))bi=i});
+  if(bi>=0){c.ana=buildAna(r,bi,false);if(c.ana){c.ana.tc=t;c.ana.auto=false}}else c.ana=null;
+  persist();render();seekTo(t);
+  flash('Raakmoment '+fmt(t)+' vastgezet');if(bi<0)toast('Raakmoment opgeslagen; op dit frame is geen skelet gevonden, dus de cijfers volgen bij “Analyseer clips”',5000);
 }
 $('#bContact').onclick=setContactHere;
 function gotoContact(dir){
