@@ -90,31 +90,53 @@ function detectCourt(rgba,W,H,opt){
         const nl=proj(Hm,-HW,0),nr=proj(Hm,HW,0);if(!nl||!nr||Math.hypot(nr[0]-nl[0],nr[1]-nl[1])<W/8)continue;
         const sc=score(Hm);if(!best||sc>best.sc)best={sc,Hm}}}}}
   if(!best)return{fail:'fit',mask,lines,nLines:lines.length,fam:fam.map(f=>f.length)};
-  // 4. refine: least squares on all intersections of model lines with re-fitted image lines
-  let Hm=best.Hm;
-  for(let it=0;it<3;it++){const fitted=[];
-    const MODEL=[{t:0},{t:SV},{t:CL-SV},{t:CL},{x:-HW},{x:-SHW},{x:SHW},{x:HW}];
-    for(const m of MODEL){const a0=m.t!=null?[-HW,m.t]:[m.x,0],a1=m.t!=null?[HW,m.t]:[m.x,CL];
-      const samp=[];const k=80;
-      for(let j=0;j<=k;j++){const u=j/k,p=proj(Hm,a0[0]+u*(a1[0]-a0[0]),a0[1]+u*(a1[1]-a0[1]));if(!p)continue;
-        // search perpendicular for the nearest line pixel
-        const q=proj(Hm,a0[0]+Math.min(1,u+0.01)*(a1[0]-a0[0]),a0[1]+Math.min(1,u+0.01)*(a1[1]-a0[1]));if(!q)continue;
-        let dx=q[0]-p[0],dy=q[1]-p[1];const dl=Math.hypot(dx,dy);if(dl<1e-6)continue;const nx=-dy/dl,ny=dx/dl;let sw=0,sx=0,sy=0;
-        for(let s=-5;s<=5;s++){const x=Math.round(p[0]+nx*s),y=Math.round(p[1]+ny*s);if(x<0||y<0||x>=W||y>=H)continue;if(mask[y*W+x]){sw++;sx+=p[0]+nx*s;sy+=p[1]+ny*s}}
+  // 4. refine homography AND lens curvature (wide-angle lenses bend straight lines near the image edges).
+  // Lens model: one-parameter division model; Hm maps court metres to UNDISTORTED pixels, lensDist() bends them into the image.
+  let Hm=best.Hm,K=0;
+  const projD=(Hm_,k,x,y)=>{const p=proj(Hm_,x,y);return p?lensDist(k,W,H,p[0],p[1]):null};
+  const quality=(Hm_,k)=>{let hit=0,tot=0;for(const s of SEG){const n_=60;for(let j=0;j<=n_;j++){const u=j/n_,p=projD(Hm_,k,s[0]+u*(s[2]-s[0]),s[1]+u*(s[3]-s[1]));if(!p)continue;const x=Math.round(p[0]),y=Math.round(p[1]);if(x<1||y<1||x>=W-1||y>=H-1)continue;tot++;if(dil[y*W+x])hit++}}return{q:tot?hit/tot:0,hit}};
+  const MODEL=[{t:0,x0:-HW,x1:HW},{t:SV,x0:-SHW,x1:SHW},{t:CL-SV,x0:-SHW,x1:SHW},{t:CL,x0:-HW,x1:HW},{x:-HW},{x:-SHW},{x:SHW},{x:HW},{x:0,y0:SV,y1:CL-SV}];
+  let cur=quality(Hm,K);
+  for(let it=0;it<5;it++){
+    // collect line pixels along each (bent) model line, in image coordinates
+    const groups=[];
+    for(const m of MODEL){const a0=m.t!=null?[m.x0,m.t]:[m.x,m.y0!=null?m.y0:0],a1=m.t!=null?[m.x1,m.t]:[m.x,m.y1!=null?m.y1:CL];
+      const samp=[],N=120,R=it===0?8:5;
+      for(let j=0;j<=N;j++){const u=j/N,P=(uu)=>projD(Hm,K,a0[0]+uu*(a1[0]-a0[0]),a0[1]+uu*(a1[1]-a0[1]));const p=P(u),q=P(Math.min(1,u+0.005)),q0=P(Math.max(0,u-0.005));if(!p||!q||!q0)continue;
+        const dx=q[0]-q0[0],dy=q[1]-q0[1],dl=Math.hypot(dx,dy);if(dl<1e-6)continue;const nx=-dy/dl,ny=dx/dl;let sw=0,sx=0,sy=0;
+        for(let s=-R;s<=R;s++){const x=Math.round(p[0]+nx*s),y=Math.round(p[1]+ny*s);if(x<0||y<0||x>=W||y>=H)continue;if(mask[y*W+x]){sw++;sx+=p[0]+nx*s;sy+=p[1]+ny*s}}
         if(sw)samp.push([sx/sw,sy/sw])}
-      if(samp.length<12)continue;
-      let mx=0,my=0;for(const s of samp){mx+=s[0];my+=s[1]}mx/=samp.length;my/=samp.length;let cxx=0,cyy=0,cxy=0;for(const s of samp){cxx+=(s[0]-mx)**2;cyy+=(s[1]-my)**2;cxy+=(s[0]-mx)*(s[1]-my)}
-      const ang=0.5*Math.atan2(2*cxy,cxx-cyy);fitted.push({m,l:{a:-Math.sin(ang),b:Math.cos(ang),c:-Math.sin(ang)*mx+Math.cos(ang)*my},n:samp.length})}
-    const src=[],dst=[];
-    for(const f of fitted)if(f.m.t!=null)for(const g of fitted)if(g.m.x!=null){
-      if((f.m.t===SV||f.m.t===CL-SV)&&Math.abs(g.m.x)===HW)continue;// service lines stop at singles lines
-      const p=inter(f.l,g.l);if(p){src.push([g.m.x,f.m.t]);dst.push(p)}}
-    if(src.length<4)break;const Hn=cHomogLS(src,dst);if(!Hn)break;const sc=score(Hn);if(sc<best.sc*0.95)break;Hm=Hn;best.sc=Math.max(best.sc,sc)}
-  const corner=(x,y)=>{const p=proj(Hm,x,y);return{x:p[0]/W,y:p[1]/H}};
-  // quality: fraction of visible model samples that hit a line pixel
-  let hit=0,tot=0;for(const s of SEG){const k=40;for(let j=0;j<=k;j++){const u=j/k,p=proj(Hm,s[0]+u*(s[2]-s[0]),s[1]+u*(s[3]-s[1]));if(!p)continue;const x=Math.round(p[0]),y=Math.round(p[1]);if(x<1||y<1||x>=W-1||y>=H-1)continue;tot++;if(dil[y*W+x])hit++}}
-  return{pts:[corner(-HW,0),corner(HW,0),corner(HW,CL),corner(-HW,CL)],H:Hm,score:best.sc,quality:tot?hit/tot:0,nLines:lines.length,mask,lines};
+      if(samp.length>=15)groups.push({m,samp})}
+    if(groups.length<4)break;
+    // joint fit of homography + lens (Levenberg-Marquardt): every collected pixel should lie on its model line;
+    // distance measured in image pixels, outliers damped (Huber)
+    const lineOf=(Hp,m)=>{const a0=m.t!=null?[m.x0,m.t]:[m.x,0],a1=m.t!=null?[m.x1,m.t]:[m.x,CL];const A=proj(Hp,a0[0],a0[1]),B=proj(Hp,a1[0],a1[1]);if(!A||!B)return null;
+      const dx=B[0]-A[0],dy=B[1]-A[1],L=Math.hypot(dx,dy);if(L<1e-9)return null;const a=-dy/L,b=dx/L;return{a,b,c:a*A[0]+b*A[1]}};
+    const resid=p=>{const Hp=p.slice(0,8).concat([1]),k=p[8],out=[];const s0=Math.hypot(W,H)/2;
+      for(const g of groups){const l=lineOf(Hp,g.m);for(const s of g.samp){if(!l){out.push(50);continue}const u=lensUndist(k,W,H,s[0],s[1]);const dx=(s[0]-W/2)/s0,dy=(s[1]-H/2)/s0;const f=1/(1+k*(dx*dx+dy*dy));out.push((l.a*u[0]+l.b*u[1]-l.c)/f)}}return out};
+    let p=Hm.slice(0,8).concat([K]),r=resid(p),lam=1e-3;
+    const huber=x=>{const a=Math.abs(x);return a<1.5?1:1.5/a};
+    const cst=rr=>{let c=0;for(const x of rr){const a=Math.abs(x);c+=a<1.5?x*x:3*a-2.25}return c};
+    let c0=cst(r);
+    for(let lm=0;lm<15;lm++){const n9=9,J=[];for(let j=0;j<n9;j++){const e=j===8?1e-4:Math.max(1e-9,Math.abs(p[j])*1e-5);const q=p.slice();q[j]+=e;const rq=resid(q);J.push(rq.map((x,i)=>(x-r[i])/e))}
+      const A=Array.from({length:n9},()=>new Array(n9).fill(0)),g_=new Array(n9).fill(0);
+      for(let i=0;i<r.length;i++){const w=huber(r[i]);for(let a=0;a<n9;a++){g_[a]+=w*J[a][i]*r[i];for(let b=a;b<n9;b++)A[a][b]+=w*J[a][i]*J[b][i]}}
+      for(let a=0;a<n9;a++)for(let b=0;b<a;b++)A[a][b]=A[b][a];
+      let improved=false;
+      for(let tries=0;tries<6&&!improved;tries++){const M=A.map((row,a)=>row.map((x,b)=>a===b?x*(1+lam):x));const d=cSolveN(M,g_.map(x=>-x));if(!d){lam*=10;continue}
+        const q=p.map((x,j)=>x+d[j]);q[8]=Math.max(-0.8,Math.min(0.3,q[8]));const rq=resid(q),cq=cst(rq);
+        if(cq<c0){p=q;r=rq;c0=cq;lam=Math.max(1e-7,lam/3);improved=true}else lam*=10}
+      if(!improved)break}
+    const Hn=p.slice(0,8).concat([1]),bk=p[8];
+    const nq=quality(Hn,bk);if(nq.hit<cur.hit*0.98)break;
+    const done=Math.abs(bk-K)<0.002&&nq.hit<=cur.hit;Hm=Hn;K=bk;cur=nq;if(done)break}
+  const corner=(x,y)=>{const p=projD(Hm,K,x,y);return{x:p[0]/W,y:p[1]/H}};
+  return{pts:[corner(-HW,0),corner(HW,0),corner(HW,CL),corner(-HW,CL)],k:K,H:Hm,score:best.sc,quality:cur.q,nLines:lines.length,mask,lines};
 }
+// lens model (division model, centre of the image, radius normalised by half the diagonal; k<0 = barrel/wide-angle)
+function lensUndist(k,W,H,x,y){if(!k)return[x,y];const cx=W/2,cy=H/2,s=Math.hypot(W,H)/2,dx=(x-cx)/s,dy=(y-cy)/s,f=1/(1+k*(dx*dx+dy*dy));return[cx+dx*f*s,cy+dy*f*s]}
+function lensDist(k,W,H,x,y){if(!k)return[x,y];const cx=W/2,cy=H/2,s=Math.hypot(W,H)/2,dx=(x-cx)/s,dy=(y-cy)/s,ru=Math.hypot(dx,dy);if(ru<1e-9)return[x,y];
+  const disc=1-4*k*ru*ru;if(disc<0)return null;const rd=(1-Math.sqrt(disc))/(2*k*ru),f=rd/ru;return[cx+dx*f*s,cy+dy*f*s]}
 function cHomog(src,dst){const A=[],b=[];
   for(let i=0;i<4;i++){const[x,y]=src[i],[X,Y]=dst[i];A.push([x,y,1,0,0,0,-X*x,-X*y]);b.push(X);A.push([0,0,0,x,y,1,-Y*x,-Y*y]);b.push(Y)}
   return cSolve8(A,b)}
@@ -122,8 +144,12 @@ function cHomogLS(src,dst){// normal equations
   const M=Array.from({length:8},()=>new Array(8).fill(0)),v=new Array(8).fill(0);
   for(let i=0;i<src.length;i++){const[x,y]=src[i],[X,Y]=dst[i];for(const[r,t]of[[[x,y,1,0,0,0,-X*x,-X*y],X],[[0,0,0,x,y,1,-Y*x,-Y*y],Y]]){for(let a=0;a<8;a++){v[a]+=r[a]*t;for(let c=0;c<8;c++)M[a][c]+=r[a]*r[c]}}}
   return cSolve8(M,v)}
+function cSolveN(A,b){const n=b.length;A=A.map(r=>r.slice());b=b.slice();
+  for(let c=0;c<n;c++){let p=c;for(let r=c+1;r<n;r++)if(Math.abs(A[r][c])>Math.abs(A[p][c]))p=r;[A[c],A[p]]=[A[p],A[c]];[b[c],b[p]]=[b[p],b[c]];if(Math.abs(A[c][c])<1e-300)return null;
+    for(let r=0;r<n;r++){if(r===c)continue;const f=A[r][c]/A[c][c];if(!f)continue;for(let k=c;k<n;k++)A[r][k]-=f*A[c][k];b[r]-=f*b[c]}}
+  return b.map((x,i)=>x/A[i][i])}
 function cSolve8(A,b){A=A.map(r=>r.slice());b=b.slice();
   for(let c=0;c<8;c++){let p=c;for(let r=c+1;r<8;r++)if(Math.abs(A[r][c])>Math.abs(A[p][c]))p=r;[A[c],A[p]]=[A[p],A[c]];[b[c],b[p]]=[b[p],b[c]];if(Math.abs(A[c][c])<1e-12)return null;
     for(let r=0;r<8;r++){if(r===c)continue;const f=A[r][c]/A[c][c];for(let k=c;k<8;k++)A[r][k]-=f*A[c][k];b[r]-=f*b[c]}}
   const h=b.map((x,i)=>x/A[i][i]);return[h[0],h[1],h[2],h[3],h[4],h[5],h[6],h[7],1]}
-if(typeof module!=='undefined')module.exports={detectCourt};
+if(typeof module!=='undefined')module.exports={detectCourt,lensDist,lensUndist};

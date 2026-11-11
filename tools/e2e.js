@@ -23,7 +23,8 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     const doc=await send('DOM.getDocument');const q=await send('DOM.querySelector',{nodeId:doc.result.root.nodeId,selector:'#fileIn'});
     await send('DOM.setFileInputFiles',{nodeId:q.result.nodeId,files:[path.resolve(vid)]});
     let court=null;const t0=Date.now();
-    for(let i=0;i<120;i++){await sleep(250);court=await ev('JSON.stringify(state.court)');if(court&&court!=='null')break}
+    for(let i=0;i<120;i++){await sleep(250);court=await ev("(document.querySelector('#calInfo')||{}).textContent||''");if(/automatisch gevonden|gekalibreerd/.test(court))break}
+    await ev("v.pause();v.currentTime=1;1");await sleep(1500);
     console.log(path.basename(vid),'na',((Date.now()-t0)/1000).toFixed(1)+'s','court =',court);
     await ev("showTab&&showTab('ball');1");await sleep(500);
     const shot=await send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(outDir,'e2e_'+path.basename(vid)+'.png'),Buffer.from(shot.result.data,'base64'));
