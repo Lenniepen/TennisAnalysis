@@ -1083,7 +1083,7 @@ async function scanFrames(crop,ta,tb,prog,target){
   return out;
 }
 const fin=Number.isFinite;
-const AV=6;
+const AV=7;
 function legHeight(P){
   const tor=metrics(P).torso;if(!tor)return NaN;const v=[];
   if(P[23].v>=0.5&&P[27].v>=0.5)v.push(px(P[27]).y-px(P[23]).y);
@@ -1141,10 +1141,14 @@ function buildAna(frames,bi,auto){
   const stance=P0[27].v>=0.3&&P0[28].v>=0.3&&torC?dist(P0,27,28)/torC:NaN;
   const cH=ok(P0,23,24)&&wristOk(bi)&&torC?(midPx(P0,23,24).y-px(P0[HW]).y)/torC:NaN;
   // forward = horizontal direction the hitting hand moves at contact (the swing direction)
-  let fwd=0;{const a=Math.max(0,bi-2),b=Math.min(n-1,bi+1);if(WP[a]&&WP[b]&&Math.abs(WP[b].x-WP[a].x)>1)fwd=Math.sign(WP[b].x-WP[a].x)}
+  // use the nearest usable hand positions around contact; the frame of contact itself is often blurred
+  let fwd=0;{let a=-1,b=-1;for(let k=bi-1;k>=Math.max(0,bi-5);k--)if(WP[k]){a=k;break}for(let k=bi;k<=Math.min(n-1,bi+2);k++)if(WP[k]){b=k;break}
+    if(b<0)for(let k=a-1;k>=Math.max(0,bi-8);k--)if(WP[k]){b=a;a=k;break}
+    if(a>=0&&b>a&&Math.abs(WP[b].x-WP[a].x)>1)fwd=Math.sign(WP[b].x-WP[a].x)}
   const hipC=ok(P0,23,24)?midPx(P0,23,24):null,shC=ok(P0,11,12)?midPx(P0,11,12):null;
   const leanFwd=fwd&&hipC&&shC?Math.atan2((shC.x-hipC.x)*fwd,hipC.y-shC.y)*180/Math.PI:NaN;
-  const front=fwd&&hipC&&WP[bi]&&torC?(WP[bi].x-hipC.x)*fwd/torC:NaN;
+  let wc=WP[bi];if(!wc)for(let k=1;k<=2&&!wc;k++)wc=WP[bi-k]||WP[bi+k]||null;
+  const front=fwd&&hipC&&wc&&torC?(wc.x-hipC.x)*fwd/torC:NaN;
   // elbow: median over the sharp frames 0.015-0.125 s before contact
   const ev=[];let pre=-1;
   for(let i=0;i<n;i++){const d=dts[i];if(d<-0.125||d>-0.015)continue;const g=frames[i];
