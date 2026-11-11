@@ -1081,7 +1081,7 @@ async function scanFrames(crop,ta,tb,prog,target){
   return out;
 }
 const fin=Number.isFinite;
-const AV=5;
+const AV=6;
 function legHeight(P){
   const tor=metrics(P).torso;if(!tor)return NaN;const v=[];
   if(P[23].v>=0.5&&P[27].v>=0.5)v.push(px(P[27]).y-px(P[23]).y);
@@ -1138,6 +1138,11 @@ function buildAna(frames,bi,auto){
   const P0=f.P,torC=tor[bi];
   const stance=P0[27].v>=0.3&&P0[28].v>=0.3&&torC?dist(P0,27,28)/torC:NaN;
   const cH=ok(P0,23,24)&&wristOk(bi)&&torC?(midPx(P0,23,24).y-px(P0[HW]).y)/torC:NaN;
+  // forward = horizontal direction the hitting hand moves at contact (the swing direction)
+  let fwd=0;{const a=Math.max(0,bi-2),b=Math.min(n-1,bi+1);if(WP[a]&&WP[b]&&Math.abs(WP[b].x-WP[a].x)>1)fwd=Math.sign(WP[b].x-WP[a].x)}
+  const hipC=ok(P0,23,24)?midPx(P0,23,24):null,shC=ok(P0,11,12)?midPx(P0,11,12):null;
+  const leanFwd=fwd&&hipC&&shC?Math.atan2((shC.x-hipC.x)*fwd,hipC.y-shC.y)*180/Math.PI:NaN;
+  const front=fwd&&hipC&&WP[bi]&&torC?(WP[bi].x-hipC.x)*fwd/torC:NaN;
   // elbow: median over the sharp frames 0.015-0.125 s before contact
   const ev=[];let pre=-1;
   for(let i=0;i<n;i++){const d=dts[i];if(d<-0.125||d>-0.015)continue;const g=frames[i];
@@ -1154,7 +1159,7 @@ function buildAna(frames,bi,auto){
     lmPre:pre>=0?frames[pre].P.map(p=>[+p.x.toFixed(4),+p.y.toFixed(4),+p.v.toFixed(2)]):null,
     tLow:low>=0?dts[low]:NaN,rise:(low>=0&&fin(h0))?(h0-H[low])*100:NaN,h0:fin(h0)?h0:null,
     turn:tmax>=0?turnS[tmax]:NaN,tTurn:tmax>=0?dts[tmax]:NaN,sep:tmax>=0&&fin(turnH[tmax])?turnS[tmax]-turnH[tmax]:NaN,
-    stance,cH,dec1:at(0.1),dec2:at(0.2),finH,across,s,
+    stance,cH,dec1:at(0.1),dec2:at(0.2),finH,across,leanFwd,front,s,
     lm:P0.map(p=>[+p.x.toFixed(4),+p.y.toFixed(4),+p.v.toFixed(2)])};
 }
 function findContact(frames){
@@ -1212,6 +1217,7 @@ $('#bPrevC').onclick=()=>gotoContact(-1);$('#bNextC').onclick=()=>gotoContact(1)
 
 const fmtS=x=>fin(x)?(x>0?'+':x<0?'−':'')+Math.abs(x).toFixed(2).replace('.',',')+' s':'–';
 const fmtP=x=>fin(x)?(x>=0?'+':'−')+Math.abs(Math.round(x))+'%':'–';
+const fmtSg=x=>fin(x)?(x>0.5?'+':x<-0.5?'−':'')+Math.abs(Math.round(x)):'–';
 const fmtD=(x,dg)=>fin(x)?(x<0?'−':'')+Math.abs(x).toFixed(dg==null?1:dg).replace('.',','):'–';
 const needsAna=c=>!c.ana||c.ana.failed||c.ana.v!==AV;
 function avgOf(g,f){const x=g.map(c=>c.ana[f]).filter(fin);return x.length?x.reduce((a,b)=>a+b,0)/x.length:NaN}
@@ -1222,6 +1228,8 @@ const COLS=[
   ['Omhoog','Stijging van je heup van laagste punt tot raken (% romplengte)',a=>fmtP(a.rise),'rise',fmtP],
   ['Romp','Romphelling t.o.v. verticaal',a=>r0(a.trunk)+'°','trunk'],
   ['Elb.','Elleboog slagarm, gemeten in de scherpe frames vlak vóór het raken (0,02–0,12 s)',a=>r0(a.elbow)+'°','elbow'],
+  ['Romp→','Romphelling in je slagrichting op het raken: + = naar voren, de bal in; − = naar achteren, van de bal weg (zinvol als je van opzij gefilmd bent)',a=>fmtSg(a.leanFwd)+'°','leanFwd',x=>fmtSg(x)+'°'],
+  ['Raakpunt','Hand t.o.v. je heup in de slagrichting op het raken (× romplengte): + = vóór je lichaam; 0 of − = naast/achter (zinvol van opzij gefilmd)',a=>fmtD(a.front),'front',x=>fmtD(x)],
   ['Draai','Maximaal indraaien van je schouders (schatting), en wanneer',a=>r0(a.turn)+'° '+fmtS(a.tTurn).replace(' s',''),'turn'],
   ['Scheid.','Verschil schouder- vs heupdraai op het max. indraaien',a=>r0(a.sep)+'°','sep'],
   ['Stand','Afstand tussen je enkels op het raken (× romplengte)',a=>fmtD(a.stance),'stance',x=>fmtD(x)],
@@ -1276,16 +1284,16 @@ $('#bSheet').onclick=async()=>{
   const list=strokeClips().filter(c=>c.ana&&!c.ana.failed);if(!list.length)return;
   if(list.some(c=>c.ana.v!==AV))toast('Sommige clips zijn met een oudere versie geanalyseerd; klik eerst op “Analyseer clips” voor alle cijfers en curves',6000);
   const r=await runExport('Analyseblad maken',async prog=>{
-    const cols=Math.min(4,list.length),rows=Math.ceil(list.length/cols),TW=380,TH=360,CAP=84,CH=196,HEAD=130,GAP=12;
+    const cols=Math.min(4,list.length),rows=Math.ceil(list.length/cols),TW=380,TH=360,CAP=100,CH=196,HEAD=130,GAP=12;
     const groups=Object.keys(LABELS).filter(k=>list.some(c=>c.label===k));
-    const OVH=220,FOOT=40+2*(OVH+50)+40+groups.length*48;
+    const OVH=220,FOOT=40+2*(OVH+50)+40+groups.length*70;
     const cv=document.createElement('canvas');cv.width=Math.max(1000,cols*TW+(cols+1)*GAP);cv.height=HEAD+rows*(TH+CAP+CH+GAP)+FOOT;const ctx=cv.getContext('2d');
     ctx.fillStyle='#0e1411';ctx.fillRect(0,0,cv.width,cv.height);
     ctx.textBaseline='top';ctx.fillStyle='#e7efe9';ctx.font='700 24px system-ui,sans-serif';ctx.fillText('Slaganalyse · '+(state.file?state.file.name:''),14,14);
     ctx.fillStyle='#8fa197';ctx.font='14px system-ui,sans-serif';
     const lines=['Beeld op het raakmoment (slagarm: frame vlak ervoor). Knie: 180° = gestrekt. Romp: 0° = rechtop. Geel = slagarm ('+($('#hand').value==='left'?'links':'rechts')+').',
       'Hoogte: heup boven enkels t.o.v. het raken (0%), in % romplengte; witte stip = laagste punt. Handsnelheid: % van de top.',
-      'Stand, raakhoogte, eindhoogte en "over" in × romplengte. 2D-schatting uit één camerahoek: vergelijk je eigen slagen.'];
+      'Stand, raakhoogte, eindhoogte, "over" en raakpunt in × romplengte. Romp→/raakpunt: in je slagrichting (zinvol van opzij gefilmd).'];
     lines.forEach((t,i)=>ctx.fillText(t,14,46+i*20));
     let lo=-5,hi=5;for(const c of list)for(const p of relSeries(c.ana)){lo=Math.min(lo,p[1]);hi=Math.max(hi,p[1])}
     lo=Math.max(-60,Math.floor((lo-3)/10)*10);hi=Math.min(60,Math.ceil((hi+3)/10)*10);const yr=[lo,hi],ys=[0,110];
@@ -1313,6 +1321,8 @@ $('#bSheet').onclick=async()=>{
       if(a.v===AV){
         ctx.fillText('draai '+r0(a.turn)+'° ('+fmtS(a.tTurn)+') · scheiding '+r0(a.sep)+'° · stand '+fmtD(a.stance)+' · raakh. '+fmtD(a.cH),ox+14,oy+TH+50);
         ctx.fillText('na raken: +0,1s '+r0(a.dec1)+'% · +0,2s '+r0(a.dec2)+'% · eind↑ '+fmtD(a.finH)+(c.label==='forehand'?' · over '+fmtD(a.across):''),ox+14,oy+TH+66);
+        const lf=a.leanFwd;ctx.fillStyle=fin(lf)?(lf<-8?'#fca5a5':lf>3?'#86efac':'#cfd8d2'):'#cfd8d2';
+        ctx.fillText('romp→ '+fmtSg(lf)+'° '+(fin(lf)?(lf>3?'(naar voren)':lf<-3?'(naar achteren)':'(rechtop)'):'')+' · raakpunt '+fmtD(a.front)+(fin(a.front)?(a.front>0.15?' (vóór)':' (naast/achter)'):''),ox+14,oy+TH+82);ctx.fillStyle='#cfd8d2';
         const cx=ox+14,cw=TW-28,ch1=66;let cy=oy+TH+CAP+4;
         drawCurveBox(ctx,cx,cy,cw,ch1,yr,[{pts:relSeries(a),color:L.color,lw:2.5,low:fin(a.tLow)&&fin(a.rise)?[a.tLow,-a.rise]:null}],{fs:10,ystep:10,zero:true,title:'hoogte · laagst '+fmtS(a.tLow)+', daarna '+fmtP(a.rise)});
         cy+=ch1+8;
@@ -1332,7 +1342,8 @@ $('#bSheet').onclick=async()=>{
     for(const k of groups){const g=list.filter(c=>c.label===k),av=f=>avgOf(g,f);
       ctx.fillStyle=LABELS[k].color;ctx.fillRect(14,fy+3,10,10);ctx.fillStyle='#cfd8d2';
       ctx.fillText(LABELS[k].name+' ('+g.length+'):  knie '+r0(av('knee'))+'° · diepst '+r0(av('kneeMin'))+'° · laagst '+fmtS(av('tLow'))+' · omhoog '+fmtP(av('rise'))+' · romp '+r0(av('trunk'))+'° · elleboog '+r0(av('elbow'))+'°',30,fy);fy+=22;
-      ctx.fillText('draai '+r0(av('turn'))+'° ('+fmtS(av('tTurn'))+') · scheiding '+r0(av('sep'))+'° · stand '+fmtD(av('stance'))+' · raakh. '+fmtD(av('cH'))+' · +0,1s '+r0(av('dec1'))+'% · +0,2s '+r0(av('dec2'))+'% · eind↑ '+fmtD(av('finH'))+(k==='forehand'?' · over '+fmtD(av('across')):''),30,fy);fy+=26}
+      ctx.fillText('draai '+r0(av('turn'))+'° ('+fmtS(av('tTurn'))+') · scheiding '+r0(av('sep'))+'° · stand '+fmtD(av('stance'))+' · raakh. '+fmtD(av('cH'))+' · +0,1s '+r0(av('dec1'))+'% · +0,2s '+r0(av('dec2'))+'% · eind↑ '+fmtD(av('finH'))+(k==='forehand'?' · over '+fmtD(av('across')):''),30,fy);fy+=22;
+      ctx.fillText('romp→ '+fmtSg(av('leanFwd'))+'° · raakpunt '+fmtD(av('front')),30,fy);fy+=26}
     return await new Promise(res=>cv.toBlob(b=>res({blob:b}),'image/png'));
   });
   if(r&&r.blob)await offerFile(r.blob,base()+'_analyse'+(state.filter?'_'+state.filter:'')+'.png');
@@ -1340,8 +1351,8 @@ $('#bSheet').onclick=async()=>{
 $('#bCsv').onclick=()=>{
   const list=strokeClips().filter(c=>c.ana&&!c.ana.failed);if(!list.length)return;
   const f=x=>fin(x)?(+x).toFixed(2).replace('.',','):'';
-  const keys=['knee','kneeL','kneeR','kneeMin','tLow','rise','trunk','elbow','turn','tTurn','sep','stance','cH','dec1','dec2','finH','across'];
-  const names=['knie_raak','knie_links','knie_rechts','diepste_knie','laagste_punt_s','omhoog_pct','romp','elleboog','draai','draai_moment_s','scheiding','stand','raakhoogte','snelheid_01s_pct','snelheid_02s_pct','eindhoogte','over_schouder'];
+  const keys=['knee','kneeL','kneeR','kneeMin','tLow','rise','trunk','elbow','turn','tTurn','sep','stance','cH','dec1','dec2','finH','across','leanFwd','front'];
+  const names=['knie_raak','knie_links','knie_rechts','diepste_knie','laagste_punt_s','omhoog_pct','romp','elleboog','draai','draai_moment_s','scheiding','stand','raakhoogte','snelheid_01s_pct','snelheid_02s_pct','eindhoogte','over_schouder','romp_slagrichting','raakpunt_voor_heup'];
   const rows=[['nr','slag','label_nr','begin','einde','raakmoment','handmatig'].concat(names).join(';')];
   for(const c of list){const a=c.ana;rows.push([indexOf(c),LABELS[c.label].name,numberOf(c),f(c.t0),f(c.t1),f(a.tc),a.auto?'nee':'ja'].concat(keys.map(k=>f(a[k]))).join(';'))}
   offerFile('﻿'+rows.join('\r\n'),base()+'_analyse.csv');
