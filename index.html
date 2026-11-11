@@ -258,7 +258,7 @@ details li{margin:2px 0}
         <li><kbd>[</kbd> / <kbd>]</kbd> begin/einde van geselecteerde clip naar huidige tijd · <kbd>P</kbd> clip afspelen · <kbd>Delete</kbd> verwijderen · <kbd>Ctrl</kbd>+<kbd>Z</kbd> ongedaan</li>
         <li><b>Raakmomenten nakijken:</b> <kbd>N</kbd> volgende slag (<kbd>Shift</kbd>+<kbd>N</kbd> vorige), bijstellen met <kbd>,</kbd> <kbd>.</kbd>, vastzetten met <kbd>T</kbd></li>
         <li><kbd>W</kbd> speler kiezen: alle spelers krijgen een nummer, klik op jezelf. Geldt voor nieuwe clips, of voor de geselecteerde clip. Een uitsnede heeft voorrang.</li>
-        <li><kbd>Y</kbd> kaders om alle spelers, met een vast nummer per speler; de gekozen speler is groen</li>
+        <li><kbd>Y</kbd> kaders om alle spelers, met een vast nummer per speler. Na <kbd>W</kbd> toont elk kader hoeveel de kleding lijkt op die van de gekozen speler (%); de beste match is groen.</li>
         <li><kbd>K</kbd> skelet tonen · <kbd>T</kbd> raakmoment van geselecteerde clip op huidige tijd</li>
         <li>Je markers worden per videobestand in <b>deze browser en deze versie</b> onthouden (de Claude- en GitHub-versie delen dat niet). Zekerder: “Automatisch opslaan in bestand…” (GitHub-versie, Chrome/Edge), of af en toe “Markers opslaan”. Met “Markers laden” zet je alles terug, inclusief raakmomenten.</li>
       </ul>
@@ -892,13 +892,35 @@ function detectAll(quick){
 function poseAnchor(P){let y0=1,y1=0;for(const i of KEYPTS){if(P[i].v<0.3)continue;y0=Math.min(y0,P[i].y);y1=Math.max(y1,P[i].y)}
   return{x:(P[23].x+P[24].x)/2,y:(P[23].y+P[24].y)/2,h:Math.max(0.03,(y1-y0)*1.15)}}
 function anchorDist(a,b){const W=v.videoWidth,H=v.videoHeight;return Math.hypot((a.x-b.x)*W,(a.y-b.y)*H)/(H*Math.max(a.h,b.h))}
-function pickNearest(c,L,gate){let b=null,bd=Infinity;for(const P of c){const d=anchorDist(poseAnchor(P),L);if(d<bd){bd=d;b=P}}return bd<=gate?b:null}
+/* clothing colours: shirt and shorts histograms from the person's box, used to recognise the chosen player */
+const acv=document.createElement('canvas'),actx=acv.getContext('2d',{willReadFrequently:true});let acvT=-1,acvF=null;
+function frameData(){if(acvF&&acvT===v.currentTime)return acvF;const W=v.videoWidth,H=v.videoHeight,s=Math.min(1,960/W);
+  acv.width=Math.round(W*s);acv.height=Math.round(H*s);actx.drawImage(v,0,0,acv.width,acv.height);acvF={d:actx.getImageData(0,0,acv.width,acv.height).data,w:acv.width,h:acv.height};acvT=v.currentTime;return acvF}
+function histRegion(F,x0,y0,x1,y1){
+  const h=new Array(16).fill(0);let n=0;const X0=Math.max(0,Math.floor(x0*F.w)),X1=Math.min(F.w-1,Math.ceil(x1*F.w)),Y0=Math.max(0,Math.floor(y0*F.h)),Y1=Math.min(F.h-1,Math.ceil(y1*F.h));
+  const sx=Math.max(1,Math.floor((X1-X0)/14)),sy=Math.max(1,Math.floor((Y1-Y0)/14));
+  for(let y=Y0;y<=Y1;y+=sy)for(let x=X0;x<=X1;x+=sx){const i=(y*F.w+x)*4,r=F.d[i],g=F.d[i+1],b=F.d[i+2],mx=Math.max(r,g,b),mn=Math.min(r,g,b),val=mx/255,sat=mx?(mx-mn)/mx:0;
+    let bin;if(sat<0.22||val<0.15)bin=12+Math.min(3,Math.floor(val*4));
+    else{let hue;if(mx===r)hue=((g-b)/(mx-mn)+6)%6;else if(mx===g)hue=(b-r)/(mx-mn)+2;else hue=(r-g)/(mx-mn)+4;bin=Math.floor(hue*2)%12}
+    h[bin]++;n++}
+  return n?h.map(x=>x/n):null;
+}
+function appearance(b){if(!b||!hasVideo())return null;const F=frameData(),bw=b.x1-b.x0,bh=b.y1-b.y0;if(bw<=0||bh<=0)return null;
+  const s=histRegion(F,b.x0+bw*0.3,b.y0+bh*0.2,b.x0+bw*0.7,b.y0+bh*0.48),p=histRegion(F,b.x0+bw*0.3,b.y0+bh*0.5,b.x0+bw*0.7,b.y0+bh*0.66);return s&&p?{s,p}:null}
+function appSim(a,b){if(!a||!b)return 1;const bc=(p,q)=>{let t=0;for(let i=0;i<16;i++)t+=Math.sqrt(p[i]*q[i]);return t};return 0.6*bc(a.s,b.s)+0.4*bc(a.p,b.p)}
+function pickNearest(c,L,gate,app){
+  let b=null,bc=Infinity;
+  for(const P of c){const d=anchorDist(poseAnchor(P),L);if(d>gate)continue;let cost=d;
+    if(app){const sim=appSim(app,appearance(personBox(P)));if(sim<0.55&&c.length>1)continue;cost+=3*(1-sim)}
+    if(cost<bc){bc=cost;b=P}}
+  return b;
+}
 function detectTracked(tr){
   const W=v.videoWidth,H=v.videoHeight,L=tr.last;
   const size=Math.min(H,W,Math.max(0.22*H,2.6*L.h*H));
   const r={x:clamp(L.x*W-size/2,0,Math.max(0,W-size)),y:clamp(L.y*H-size*0.55,0,Math.max(0,H-size)),w:size,h:size};
-  let best=pickNearest(detectRegionImg(r,512),L,0.9);
-  if(!best)best=pickNearest(detectAll(true),L,3);
+  let best=pickNearest(detectRegionImg(r,512),L,0.9,tr.app);
+  if(!best)best=pickNearest(detectAll(true),L,tr.app?6:3,tr.app);
   if(best){const a=poseAnchor(best);tr.last={x:a.x,y:a.y,h:L.h*0.8+a.h*0.2};tr.lost=0}else tr.lost=(tr.lost||0)+1;
   return best;
 }
@@ -950,10 +972,11 @@ function renderOverlay(){
   for(const f of OVERLAYS)try{f(ctx,w,h,dpr)}catch(e){console.warn(e)}
   if(BOX.on&&!state.pickMode){
     const tg=activeTarget();let tid=-1;
-    if(tg){let bd=1.5;for(const b of BOX.list){const d=anchorDist(b.a,POSE.liveTr?POSE.liveTr.last:tg);if(d<bd){bd=d;tid=b.id}}}
+    if(tg&&tg.app){let bs=0.7;for(const b of BOX.list)if(b.sim!=null&&b.sim>bs){bs=b.sim;tid=b.id}}
+    else if(tg){let bd=1.5;for(const b of BOX.list){const d=anchorDist(b.a,POSE.liveTr?POSE.liveTr.last:tg);if(d<bd){bd=d;tid=b.id}}}
     for(const b of BOX.list){const me=b.id===tid,x=b.x0*w,y=b.y0*h,bw=(b.x1-b.x0)*w,bh=(b.y1-b.y0)*h;
       ctx.strokeStyle=me?'#d4f53c':'rgba(125,211,252,.95)';ctx.lineWidth=(me?2.5:2)*dpr;ctx.strokeRect(x,y,bw,bh);
-      const lab=(me?'★ ':'')+'Speler '+b.id;ctx.font='600 '+(11*dpr)+'px system-ui,sans-serif';const tw=ctx.measureText(lab).width+8*dpr;
+      const lab=(me?'★ ':'')+'Speler '+b.id+(b.sim!=null?' · '+Math.round(b.sim*100)+'%':'');ctx.font='600 '+(11*dpr)+'px system-ui,sans-serif';const tw=ctx.measureText(lab).width+8*dpr;
       ctx.fillStyle=me?'#d4f53c':'rgba(125,211,252,.95)';ctx.fillRect(x,y-15*dpr,tw,15*dpr);ctx.fillStyle='#0b100d';ctx.textBaseline='middle';ctx.fillText(lab,x+4*dpr,y-7.5*dpr)}
   }
   if(state.pickMode){
@@ -978,7 +1001,7 @@ function poseTick(){
     const cr=activeCrop(),tg=activeTarget();let P;
     if(cr)P=detectNow(cr);
     else if(tg&&POSE.lmImg){
-      if(!POSE.liveTr||POSE.liveTr.src!==tg||Math.abs(v.currentTime-(POSE.liveT||0))>1.5)POSE.liveTr={last:{x:tg.x,y:tg.y,h:tg.h},src:tg};
+      if(!POSE.liveTr||POSE.liveTr.src!==tg||Math.abs(v.currentTime-(POSE.liveT||0))>1.5)POSE.liveTr={last:{x:tg.x,y:tg.y,h:tg.h},src:tg,app:tg.app||null};
       P=detectTracked(POSE.liveTr);POSE.liveT=v.currentTime;
     }else P=detectNow(null);
     POSE.last=P;drawLive(P);
@@ -1015,14 +1038,14 @@ async function togglePick(){
 }
 function pickAt(p){
   const c=POSE.pickCands||[];if(!c.length){toast('Geen spelers gevonden; ga naar een ander frame');return}
-  let best=null,bd=Infinity;
-  for(const P of c){const a=poseAnchor(P);const d=Math.hypot((a.x-p.x)*v.videoWidth,(a.y-p.y)*v.videoHeight)/(v.videoHeight*a.h);if(d<bd){bd=d;best=a}}
+  let best=null,bestP=null,bd=Infinity;
+  for(const P of c){const a=poseAnchor(P);const d=Math.hypot((a.x-p.x)*v.videoWidth,(a.y-p.y)*v.videoHeight)/(v.videoHeight*a.h);if(d<bd){bd=d;best=a;bestP=P}}
   if(bd>1.5){toast('Klik dichter bij een speler');return}
   if(getClip(state.sel))snapshot();
   const hadCrop=!!activeCrop();if(hadCrop){const cl=getClip(state.sel);if(cl)cl.crop=null;else state.crop=null}
-  setActiveTarget({x:best.x,y:best.y,h:best.h,t:v.currentTime});
+  setActiveTarget({x:best.x,y:best.y,h:best.h,t:v.currentTime,app:appearance(personBox(bestP))});
   state.pickMode=false;$('#wrap').classList.remove('pick-mode');persist();render();renderPick();
-  toast('Speler gekozen'+(hadCrop?' (uitsnede verwijderd)':'')+'. '+(getClip(state.sel)?'Deze clip':'Nieuwe clips')+' volgen nu deze speler.',4500);
+  toast('Speler gekozen; kleur van shirt en broek onthouden'+(hadCrop?' (uitsnede verwijderd)':'')+'. '+(getClip(state.sel)?'Deze clip':'Nieuwe clips')+' volgen nu deze speler.',4500);
   if(POSE.on)poseTick();else renderOverlay();
 }
 $('#bPick').onclick=togglePick;
@@ -1063,6 +1086,7 @@ function boxTick(force){
     for(const b of nb){let best=null,bd=jump?0.8:1.2;
       for(const o of BOX.list){if(used.has(o.id))continue;const d=anchorDist(o.a,b.a);if(d<bd){bd=d;best=o}}
       if(best){b.id=best.id;used.add(best.id)}else b.id=BOX.next++}
+    const tg=activeTarget();if(tg&&tg.app)for(const b of nb)b.sim=appSim(tg.app,appearance(b));
     BOX.list=nb.sort((a,b)=>a.id-b.id);
   }finally{BOX.busy=false}
 }
@@ -1086,7 +1110,7 @@ function frameFingerprint(){try{fpx.drawImage(v,0,0,48,27);return fpx.getImageDa
 function fpDiff(a,b){let s=0;for(let i=0;i<a.length;i+=4)s+=Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2]);return s/(a.length/4*3)}
 async function scanFrames(crop,ta,tb,prog,target){
   const dt=1/anaFps(),out=[];const n=Math.max(1,Math.round((tb-ta)/dt));let prevFp=null;
-  const tr=!crop&&target?{last:{x:target.x,y:target.y,h:target.h}}:null;
+  const tr=!crop&&target?{last:{x:target.x,y:target.y,h:target.h},app:target.app||null}:null;
   for(let i=0;i<=n;i++){
     if(state.cancel)return null;
     const t=Math.min(tb,ta+i*dt);await seek(t);
@@ -1560,7 +1584,7 @@ async function analyzeBall(c,prog){
   const raw=[];let prevFp=null;
   // follow the player during the scan so his body (shoes, arms) is not mistaken for the ball
   let tr=null;const lm0=c.ana&&c.ana.lm?c.ana.lm.map(q=>({x:q[0],y:q[1],v:q[2]})):null;
-  if(POSE.lm||POSE.lmImg){const a=c.target||(lm0?poseAnchor(lm0):null);if(a)tr={last:{x:a.x,y:a.y,h:a.h}}}
+  if(POSE.lm||POSE.lmImg){const a=c.target||(lm0?poseAnchor(lm0):null);if(a)tr={last:{x:a.x,y:a.y,h:a.h},app:c.target&&c.target.app||null}}
   let boxes=[],k2=0;
   const bodyBox=P=>{let x0=1,x1=0,y0=1,y1=0;for(const i of KEYPTS.concat([0,29,30,31,32])){if(P[i].v<0.3)continue;x0=Math.min(x0,P[i].x);x1=Math.max(x1,P[i].x);y0=Math.min(y0,P[i].y);y1=Math.max(y1,P[i].y)}
     const mh=(y1-y0)*0.12,mw=mh*v.videoHeight/v.videoWidth;return{x0:x0-mw*1.5,x1:x1+mw*1.5,y0:y0-mh*1.5,y1:y1+mh*1.6}};
