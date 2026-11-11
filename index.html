@@ -91,6 +91,41 @@ details li{margin:2px 0}
 #dlg textarea{width:100%;height:300px;background:#0b100d;color:var(--txt);border:1px solid var(--line);border-radius:8px;font:12px ui-monospace,Consolas,monospace;padding:8px;white-space:pre}
 #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#24322a;border:1px solid var(--line);padding:9px 14px;border-radius:9px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:30;max-width:90vw}
 #toast.on{opacity:1}
+
+/* ---------- layout v2: no page scroll; tabs on the right ---------- */
+html,body{height:100%}
+body{display:flex;flex-direction:column;overflow:hidden}
+header{padding:8px 16px;flex:0 0 auto}
+.app{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) clamp(330px,27vw,420px);gap:12px;padding:10px 14px}
+.left{display:flex;flex-direction:column;gap:8px;min-height:0;min-width:0}
+.left .stagewrap{flex:1;min-height:180px;align-items:center;justify-content:center;border-radius:10px}
+.left .stage{width:auto;aspect-ratio:auto}
+.left .tl{margin-top:0;flex:0 0 auto}
+.tbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 auto}
+.tbar .lbl{color:var(--mut);font-size:12px}
+.seg{display:inline-flex;gap:4px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:4px}
+.seg .btn{padding:5px 9px}
+.btn.ic{padding:5px 8px;min-width:32px}
+.status{color:var(--mut);font-size:11px;flex:1;min-width:160px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#time{min-width:140px;font-size:14px}
+#pending{margin-top:0}
+.side{display:flex;flex-direction:column;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.tabs{display:flex;border-bottom:1px solid var(--line);flex:0 0 auto}
+.tabs button{flex:1;background:none;border:0;border-bottom:2px solid transparent;color:var(--mut);padding:10px 4px;font:inherit;font-size:13px;cursor:pointer}
+.tabs button.on{color:var(--txt);border-bottom-color:var(--acc);font-weight:600}
+.tabs button:hover{color:var(--txt)}
+#count{color:var(--mut);font-weight:400}
+.panel{display:none;flex:1;min-height:0;overflow:auto;padding:12px}
+.panel.on{display:block}
+.panel h3{font-size:13px;margin:14px 0 6px;color:var(--txt)}
+.panel h3:first-child{margin-top:0}
+.rowf{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+.mini{font-size:12px;color:var(--mut);display:flex;gap:6px;align-items:center;white-space:nowrap}
+#list{max-height:none}
+#anaScroll{max-height:none!important}
+details.info{margin-top:10px}details.info summary{cursor:pointer;color:var(--mut);font-size:12px}
+.steps,.keys{padding-left:18px;margin:6px 0;color:var(--mut);font-size:13px}.steps li,.keys li{margin:4px 0}
+@media (max-width:1100px){body{overflow:auto;height:auto}.app{grid-template-columns:1fr}.left .stagewrap{flex:none;height:56vh}.side{height:70vh}}
 </style>
 </head>
 <body>
@@ -101,8 +136,8 @@ details li{margin:2px 0}
   <label class="btn pri">Video openen<input id="fileIn" type="file" accept="video/*,.mp4,.mov" hidden></label>
 </header>
 
-<div class="layout">
-<section>
+<div class="app">
+<section class="left">
   <div class="stagewrap" id="wrap">
     <div class="stage" id="stage">
       <video id="v" playsinline muted preload="auto"></video>
@@ -110,7 +145,7 @@ details li{margin:2px 0}
       <div id="layer"><div id="box"><div id="handle"></div></div></div>
       <div id="empty">
         <div style="font-size:34px">🎬</div>
-        <div><b>Sleep je GoPro-video hierheen</b><br>of klik op “Video openen”.<br>De video wordt niet geüpload; alles gebeurt in je browser.</div>
+        <div><b>Sleep je video hierheen</b><br>of klik op “Video openen”.<br>De video wordt niet geüpload; alles gebeurt in je browser.</div>
       </div>
       <div id="flash"></div>
     </div>
@@ -118,109 +153,104 @@ details li{margin:2px 0}
 
   <div class="tl" id="tl"><div id="tlClips"></div><div class="pend" id="tlPend"></div><div class="head" id="tlHead"></div></div>
 
-  <div class="row">
-    <div class="group">
-      <button class="btn" id="bBack5" title="5 s terug (Shift+←)">⏪ 5s</button>
-      <button class="btn" id="bPrevF" title="Vorig frame (,)">◁ frame</button>
-      <button class="btn pri" id="bPlay" title="Afspelen/pauze (spatie)">▶</button>
-      <button class="btn" id="bNextF" title="Volgend frame (.)">frame ▷</button>
-      <button class="btn" id="bFwd5" title="5 s vooruit (Shift+→)">5s ⏩</button>
+  <div class="tbar">
+    <div class="seg">
+      <button class="btn ic" id="bBack5" title="5 s terug (Shift+←)">⏪</button>
+      <button class="btn ic" id="bPrevF" title="Vorig frame (,)">◁</button>
+      <button class="btn pri ic" id="bPlay" title="Afspelen/pauze (spatie)">▶</button>
+      <button class="btn ic" id="bNextF" title="Volgend frame (.)">▷</button>
+      <button class="btn ic" id="bFwd5" title="5 s vooruit (Shift+→)">⏩</button>
     </div>
     <div id="time">0:00.00 / 0:00.00</div>
-    <div class="group">
-      <span class="lbl">Snelheid</span>
-      <select id="speed" title="↑/↓">
+    <div class="seg">
+      <select id="speed" title="Snelheid (↑/↓)">
         <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option>
         <option value="1.5">1.5×</option><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option>
       </select>
-      <button class="btn sm" id="bMute" title="Geluid aan/uit (M)">🔇</button>
+      <button class="btn ic" id="bMute" title="Geluid aan/uit (M)">🔇</button>
     </div>
+    <span class="spacer"></span>
+    <button class="btn" id="bUndo" title="Ongedaan maken (Ctrl+Z)">↶ Ongedaan</button>
   </div>
 
-  <div class="row">
-    <div class="group">
-      <span class="lbl">Tag de slag op het raakmoment:</span>
-      <span id="tagBtns" style="display:contents"></span>
-    </div>
-  </div>
-  <div class="row">
-    <div class="group">
-      <span class="lbl">Handmatig:</span>
-      <button class="btn" id="bIn">Begin hier<kbd>I</kbd></button>
-      <button class="btn" id="bOut">Einde hier<kbd>O</kbd></button>
-    </div>
-    <div class="group">
-      <span class="lbl">Uitsnede:</span>
-      <button class="btn" id="bCrop">Teken rond jezelf<kbd>C</kbd></button>
-      <button class="btn sm" id="bCropClear">Wissen</button>
-      <span class="cropinfo" id="cropInfo">geen</span>
-    </div>
-    <div class="group">
-      <span class="lbl">Speler:</span>
-      <button class="btn" id="bPick" title="Toon alle spelers en klik op wie gevolgd moet worden">Kies speler<kbd>W</kbd></button>
-      <button class="btn sm" id="bPickClear">Wissen</button>
-      <button class="btn sm" id="bBoxes" title="Kaders om alle spelers (Y)">Kaders<kbd>Y</kbd></button>
-      <span class="cropinfo" id="pickInfo">niet gekozen</span>
-    </div>
-    <div class="group">
-      <span class="lbl">Skelet:</span>
-      <button class="btn" id="bPose">Tonen<kbd>K</kbd></button>
-      <button class="btn" id="bContact" title="Zet het raakmoment van de geselecteerde clip op de huidige tijd">Raakmoment hier<kbd>T</kbd></button>
+  <div class="tbar">
+    <span class="lbl">Tag op raakmoment</span>
+    <span id="tagBtns" class="seg"></span>
+    <div class="seg">
+      <button class="btn" id="bIn" title="Begin van een clip of punt hier (I)">Begin<kbd>I</kbd></button>
+      <button class="btn" id="bOut" title="Einde hier (O), daarna een labeltoets">Einde<kbd>O</kbd></button>
     </div>
   </div>
   <div id="pending"></div>
+
+  <div class="tbar">
+    <div class="seg">
+      <button class="btn" id="bPick" title="Toon alle spelers en klik op wie gevolgd moet worden (W)">👤 Speler<kbd>W</kbd></button>
+      <button class="btn ic" id="bPickClear" title="Gekozen speler wissen">✕</button>
+      <button class="btn" id="bBoxes" title="Kaders om alle spelers (Y)">▢ Kaders<kbd>Y</kbd></button>
+    </div>
+    <div class="seg">
+      <button class="btn" id="bCrop" title="Uitsnede rond jezelf tekenen (C)">✂ Uitsnede<kbd>C</kbd></button>
+      <button class="btn ic" id="bCropClear" title="Uitsnede wissen">✕</button>
+    </div>
+    <div class="seg">
+      <button class="btn" id="bPose" title="Skelet tonen (K)">🦴 Skelet<kbd>K</kbd></button>
+      <button class="btn" id="bContact" title="Raakmoment van de geselecteerde clip op de huidige tijd (T)">◎ Raakmoment<kbd>T</kbd></button>
+    </div>
+    <div class="status"><span id="pickInfo">niet gekozen</span> · <span>uitsnede: </span><span id="cropInfo">geen</span></div>
+  </div>
 </section>
 
-<aside>
-  <div class="card">
-    <h2>Clips <span id="count" style="color:var(--mut);font-weight:400"></span><span class="spacer"></span><button class="btn sm" id="bUndo" title="Ctrl+Z">↶ Ongedaan</button></h2>
+<aside class="side">
+  <nav class="tabs" id="tabs">
+    <button data-tab="clips" class="on">Clips <span id="count"></span></button>
+    <button data-tab="ana">Analyse</button>
+    <button data-tab="ball">Bal</button>
+    <button data-tab="export">Export</button>
+    <button data-tab="help">Help</button>
+  </nav>
+
+  <div class="panel on" data-panel="clips">
     <div class="chips" id="chips"></div>
     <ol id="list"></ol>
   </div>
 
-  <div class="card">
-    <h2>Slaganalyse</h2>
-    <div class="set">
-      <label for="hand">Speelhand</label>
-      <select id="hand"><option value="left" selected>Links</option><option value="right">Rechts</option></select>
+  <div class="panel" data-panel="ana">
+    <div class="rowf">
+      <button class="btn pri" id="bAnalyze" style="flex:1">Analyseer clips</button>
+      <label class="mini">Speelhand <select id="hand"><option value="left" selected>Links</option><option value="right">Rechts</option></select></label>
     </div>
-    <div class="stack">
-      <button class="btn pri" id="bAnalyze">Analyseer clips</button>
-      <div style="display:flex;gap:6px">
-        <button class="btn" id="bPrevC" style="flex:1" title="Shift+N">◀ Vorig raakmoment</button>
-        <button class="btn" id="bNextC" style="flex:1" title="N">Volgend raakmoment<kbd>N</kbd></button>
-      </div>
-      <div style="display:flex;gap:6px">
-        <button class="btn" id="bSheet" style="flex:1">Analyseblad (png)</button>
-        <button class="btn" id="bCsv" style="flex:1">Cijfers (csv)</button>
-      </div>
+    <div class="rowf">
+      <button class="btn" id="bPrevC" style="flex:1" title="Shift+N">◀ Vorig raakmoment</button>
+      <button class="btn" id="bNextC" style="flex:1" title="N">Volgend<kbd>N</kbd></button>
+    </div>
+    <div class="rowf">
+      <button class="btn" id="bSheet" style="flex:1">Analyseblad (png)</button>
+      <button class="btn" id="bCsv" style="flex:1">Cijfers (csv)</button>
     </div>
     <div id="poseStatus" class="note" style="display:none"></div>
     <div id="anaTable"></div>
-    <div class="note">Het skeletmodel (MediaPipe Pose) draait op je eigen computer. Het raakmoment wordt geschat op de hoogste snelheid van je slaghand; controleer het en zet het zo nodig zelf met <kbd>T</kbd>. Hoeken zijn 2D-schattingen in het beeld: 180° = gestrekte knie, romp 0° = rechtop. Vergelijk vooral je eigen slagen met elkaar.</div>
+    <details class="info"><summary>Uitleg</summary><div class="note">Het skeletmodel (MediaPipe Pose) draait op je eigen computer. Het raakmoment wordt automatisch geschat: eerst op de hoogste snelheid van je slaghand, daarna verfijnd met de bal (het frame waarin de bal het dichtst bij je hand is). Controleer het met <kbd>N</kbd> en zet het zo nodig met <kbd>T</kbd>. Hoeken zijn 2D-schattingen: 180° = gestrekte knie, romp 0° = rechtop. Vergelijk vooral je eigen slagen met elkaar. Beweeg over een kolomkop voor uitleg.</div></details>
   </div>
 
-  <div class="card">
-    <h2>Bal-tracking <span class="cropinfo">experimenteel</span></h2>
-    <div class="set">
-      <label for="calMode">Nabije kalibratiepunten</label>
-      <select id="calMode"><option value="baseline">Hoeken achterlijn</option><option value="service">Servicelijn × enkelzijlijn</option></select>
-      <label for="showCourt">Baanlijnen tonen</label>
-      <input type="checkbox" id="showCourt" checked>
+  <div class="panel" data-panel="ball">
+    <div class="rowf">
+      <button class="btn" id="bCalib" style="flex:1">Baan kalibreren</button>
+      <button class="btn" id="bCalEdit" style="flex:1">Punten bijstellen</button>
     </div>
-    <div class="stack">
-      <div style="display:flex;gap:6px"><button class="btn" id="bCalib" style="flex:1">Baan kalibreren (4 klikken)</button><button class="btn" id="bCalEdit" style="flex:1">Punten bijstellen</button></div>
-      <button class="btn pri" id="bBall">Bal volgen in clips</button>
+    <div class="rowf">
+      <label class="mini">Nabije punten <select id="calMode"><option value="baseline">Hoeken achterlijn</option><option value="service">Servicelijn × enkelzijlijn</option></select></label>
+      <label class="mini"><input type="checkbox" id="showCourt" checked> Lijnen tonen</label>
     </div>
     <div id="calInfo" class="note"></div>
+    <button class="btn pri" id="bBall" style="width:100%">Bal volgen in clips</button>
     <canvas id="courtMap" style="width:100%;margin-top:8px;border-radius:8px;display:block"></canvas>
     <div id="ballTable"></div>
-    <div class="stack"><button class="btn" id="bCourtPng">Stuitpunten (png)</button></div>
-    <div class="note">Volgt de gele bal via beweging en kleur, zoekt het eerste stuitpunt na het raken en rekent dat met de kalibratie om naar de baan. Snelheid = gemiddelde van raken tot stuit (lager dan de topsnelheid). Werkt het best met een vaste camera en 60 fps of meer.</div>
+    <button class="btn" id="bCourtPng" style="width:100%;margin-top:8px">Stuitpunten (png)</button>
+    <details class="info"><summary>Uitleg</summary><div class="note">Volgt de gele bal via beweging en kleur, zoekt het stuitpunt na het raken en rekent dat met de kalibratie om naar de baan. Snelheid = gemiddelde van raken tot stuit (lager dan de topsnelheid). De kalibratie wordt ook gebruikt voor de service-metingen in meters. Werkt het best met een vaste camera en 60 fps of meer. Experimenteel.</div></details>
   </div>
 
-  <div class="card">
-    <h2>Exporteren</h2>
+  <div class="panel" data-panel="export">
     <div class="set">
       <label for="outH">Max. hoogte</label>
       <select id="outH"><option value="480">480p</option><option value="720" selected>720p</option><option value="1080">1080p</option><option value="0">origineel</option></select>
@@ -233,41 +263,44 @@ details li{margin:2px 0}
       <button class="btn pri" id="bMontage">Montage als één video</button>
       <button class="btn" id="bZip">Alle clips los (zip)</button>
       <button class="btn" id="bFfmpeg">ffmpeg-commando’s (lossless/sneller)</button>
-      <div style="display:flex;gap:6px">
+    </div>
+    <div class="note" id="dlNote">Export neemt de clips in realtime op (zonder geluid). Houd dit tabblad zichtbaar. De filter bij Clips bepaalt welke clips meegaan.</div>
+    <h3>Markers bewaren</h3>
+    <div class="stack">
+      <div class="rowf" style="margin:0">
         <button class="btn" id="bSaveJson" style="flex:1">Markers opslaan</button>
         <label class="btn" style="flex:1;text-align:center">Markers laden<input type="file" id="jsonIn" accept=".json,application/json" hidden></label>
       </div>
       <button class="btn" id="bAuto" title="Bewaar markers, raakmomenten, speler en kalibratie bij elke wijziging in een bestand naast je video">Automatisch opslaan in bestand…</button>
       <div class="note" id="autoInfo"></div>
     </div>
-    <div class="note" id="dlNote">Export neemt de clips in realtime op (zonder geluid). Houd dit tabblad zichtbaar tijdens het exporteren. De filter bij Clips bepaalt welke clips meegaan.</div>
   </div>
 
-  <div class="card">
-    <details>
-      <summary>Sneltoetsen &amp; werkwijze</summary>
-      <ul>
-        <li><b>Snelste route:</b> speel af op 2×, druk op het raakmoment op <kbd>F</kbd> forehand, <kbd>B</kbd> backhand, <kbd>S</kbd> service, <kbd>V</kbd> volley of <kbd>X</kbd> overig. Er wordt een clip gemaakt van “voor” tot “na” dat moment (service krijgt 1 s extra aanloop).</li>
-        <li><kbd>I</kbd> / <kbd>O</kbd> begin/einde handmatig, daarna een labeltoets</li>
-        <li><b>Heel punt:</b> <kbd>I</kbd> bij de eerste slag, ga naar het einde van het punt, druk <kbd>R</kbd>. Bal-tracking volgt dan alle ballen en stuiten in dat punt; de slaganalyse slaat punten over.</li>
-        <li><kbd>Spatie</kbd> afspelen/pauze · <kbd>←</kbd><kbd>→</kbd> 1 s · <kbd>Shift</kbd>+pijl 5 s · <kbd>,</kbd><kbd>.</kbd> frame</li>
-        <li><kbd>↑</kbd><kbd>↓</kbd> snelheid · <kbd>M</kbd> geluid</li>
-        <li><kbd>C</kbd> uitsnede tekenen; sleep het kader om het te verplaatsen, het hoekje om te vergroten</li>
-        <li>Uitsnede geldt voor nieuwe clips, of voor de <b>geselecteerde</b> clip als je er een aanklikt (<kbd>Esc</kbd> deselecteert)</li>
-        <li>Klik op een clip (in de lijst of de tijdlijn): je springt naar het raakmoment, of naar het begin als dat nog niet bekend is. ▶ speelt de hele clip af.</li>
-        <li><kbd>[</kbd> / <kbd>]</kbd> begin/einde van geselecteerde clip naar huidige tijd · <kbd>P</kbd> clip afspelen · <kbd>Delete</kbd> verwijderen · <kbd>Ctrl</kbd>+<kbd>Z</kbd> ongedaan</li>
-        <li><b>Raakmomenten nakijken:</b> <kbd>N</kbd> volgende slag (<kbd>Shift</kbd>+<kbd>N</kbd> vorige), bijstellen met <kbd>,</kbd> <kbd>.</kbd>, vastzetten met <kbd>T</kbd></li>
-        <li><kbd>W</kbd> speler kiezen: alle spelers krijgen een nummer, klik op jezelf. Geldt voor nieuwe clips, of voor de geselecteerde clip. Een uitsnede heeft voorrang.</li>
-        <li><kbd>Y</kbd> kaders om alle spelers, met een vast nummer per speler. Na <kbd>W</kbd> toont elk kader hoeveel de kleding lijkt op die van de gekozen speler (%); de beste match is groen.</li>
-        <li><kbd>K</kbd> skelet tonen · <kbd>T</kbd> raakmoment van geselecteerde clip op huidige tijd</li>
-        <li>Je markers worden per videobestand in <b>deze browser en deze versie</b> onthouden (de Claude- en GitHub-versie delen dat niet). Zekerder: “Automatisch opslaan in bestand…” (GitHub-versie, Chrome/Edge), of af en toe “Markers opslaan”. Met “Markers laden” zet je alles terug, inclusief raakmomenten.</li>
-      </ul>
-      <div style="display:grid;grid-template-columns:auto auto;gap:6px 10px;margin-top:10px;font-size:13px;align-items:center">
-        <span style="color:var(--mut)">Tijd vóór raakmoment (s)</span><input type="number" id="pre" step="0.25" min="0" value="1.5">
-        <span style="color:var(--mut)">Tijd na raakmoment (s)</span><input type="number" id="post" step="0.25" min="0" value="1.25">
-        <span style="color:var(--mut)">FPS bron (frame-stap)</span><input type="number" id="srcFps" step="1" min="1" value="60">
-      </div>
-    </details>
+  <div class="panel" data-panel="help">
+    <h3>Instellingen</h3>
+    <div class="set">
+      <label for="pre">Tijd vóór raakmoment (s)</label><input type="number" id="pre" step="0.25" min="0" value="1.5">
+      <label for="post">Tijd na raakmoment (s)</label><input type="number" id="post" step="0.25" min="0" value="1.25">
+      <label for="srcFps">FPS bron (wordt herkend bij afspelen)</label><input type="number" id="srcFps" step="1" min="1" value="60">
+    </div>
+    <h3>Werkwijze</h3>
+    <ol class="steps">
+      <li><b>Taggen:</b> speel af op 2× en druk op het raakmoment op <kbd>F</kbd> <kbd>B</kbd> <kbd>S</kbd> <kbd>V</kbd> <kbd>X</kbd>. Een heel punt: <kbd>I</kbd> bij het begin, naar het einde, <kbd>R</kbd>.</li>
+      <li><b>Speler:</b> <kbd>W</kbd> en klik op jezelf (kleding wordt onthouden).</li>
+      <li><b>Analyse:</b> tab Analyse → Analyseer clips → loop langs met <kbd>N</kbd>, zet zo nodig <kbd>T</kbd> → Analyseblad.</li>
+      <li><b>Bal:</b> tab Bal → kalibreer de baan → Bal volgen.</li>
+      <li><b>Bewaren:</b> tab Export → Automatisch opslaan in bestand (GitHub-versie, Chrome/Edge), of Markers opslaan.</li>
+    </ol>
+    <h3>Sneltoetsen</h3>
+    <ul class="keys">
+      <li><kbd>Spatie</kbd> afspelen/pauze · <kbd>←</kbd><kbd>→</kbd> 1 s · <kbd>Shift</kbd>+pijl 5 s · <kbd>,</kbd><kbd>.</kbd> frame · <kbd>↑</kbd><kbd>↓</kbd> snelheid · <kbd>M</kbd> geluid</li>
+      <li><kbd>F</kbd> forehand · <kbd>B</kbd> backhand · <kbd>S</kbd> service (1 s extra aanloop) · <kbd>V</kbd> volley · <kbd>X</kbd> overig · <kbd>R</kbd> punt</li>
+      <li><kbd>I</kbd>/<kbd>O</kbd> begin/einde · <kbd>[</kbd>/<kbd>]</kbd> begin/einde geselecteerde clip hier · <kbd>P</kbd> clip afspelen · <kbd>Delete</kbd> verwijderen · <kbd>Ctrl</kbd>+<kbd>Z</kbd> ongedaan · <kbd>Esc</kbd> deselecteren</li>
+      <li><kbd>N</kbd>/<kbd>Shift</kbd>+<kbd>N</kbd> volgend/vorig raakmoment · <kbd>T</kbd> raakmoment hier · <kbd>K</kbd> skelet</li>
+      <li><kbd>W</kbd> speler kiezen · <kbd>Y</kbd> kaders om alle spelers (met kledingmatch in %) · <kbd>C</kbd> uitsnede (sleep om te verplaatsen, hoekje om te vergroten)</li>
+      <li>Klik op een clip: je springt naar het raakmoment. ▶ speelt de hele clip af. Uitsnede en speler gelden voor nieuwe clips, of voor de geselecteerde clip.</li>
+      <li>Markers worden per videobestand in <b>deze browser en deze versie</b> onthouden; de Claude- en GitHub-versie delen dat niet. Gebruik daarom ook Markers opslaan/laden.</li>
+    </ul>
   </div>
 </aside>
 </div>
@@ -1123,7 +1156,7 @@ async function scanFrames(crop,ta,tb,prog,target){
   return out;
 }
 const fin=Number.isFinite;
-const AV=7;
+const AV=8;
 function legHeight(P){
   const tor=metrics(P).torso;if(!tor)return NaN;const v=[];
   if(P[23].v>=0.5&&P[27].v>=0.5)v.push(px(P[27]).y-px(P[23]).y);
@@ -1189,6 +1222,27 @@ function buildAna(frames,bi,auto){
   const leanFwd=fwd&&hipC&&shC?Math.atan2((shC.x-hipC.x)*fwd,hipC.y-shC.y)*180/Math.PI:NaN;
   let wc=WP[bi];if(!wc)for(let k=1;k<=2&&!wc;k++)wc=WP[bi-k]||WP[bi+k]||null;
   const front=fwd&&hipC&&wc&&torC?(wc.x-hipC.x)*fwd/torC:NaN;
+  // forward movement on the court in metres (needs the court calibration): mainly for the serve
+  let svFwd=NaN,svLand=NaN,svFront=NaN;
+  const chc=typeof courtH==='function'?courtH():null;
+  if(chc&&chc.toCourt&&low>=0&&frames[low].P){
+    const G=(x,y)=>{const[X,Y]=applyH(chc.toCourt,x,y);return{X,Y}};
+    const ank=P=>{if(!P)return null;const va=P[27].v>=0.2,vb=P[28].v>=0.2;if(!va&&!vb)return null;const a=px(P[va?27:28]),b=px(P[vb?28:27]);return{a,b,y:Math.max(a.y,b.y)}};
+    // at contact the feet are often blurred or in the air: fall back to the nearest frame with visible feet
+    const near0=()=>{for(let d=0;d<=4;d++)for(const k of[bi-d,bi+d]){if(k<0||k>=n)continue;const P=frames[k].P;if(ank(P)&&P&&ok(P,23,24))return P}return null};
+    const PL=frames[low].P,kL=ank(PL);
+    if(kL&&ok(PL,23,24)){
+      const fa0=G(kL.a.x,kL.a.y),fb0=G(kL.b.x,kL.b.y),startY=(fa0.Y+fb0.Y)/2,near=startY<CRT.NET,dir=near?1:-1;
+      const hipG=(P,yy)=>{const h=midPx(P,23,24);return G(h.x,yy)};
+      const P0f=ok(P0,23,24)&&ank(P0)?P0:near0(),k0=P0f&&ank(P0f);
+      if(k0){svFwd=dir*(hipG(P0f,k0.y).Y-hipG(PL,kL.y).Y);
+        const fa=G(k0.a.x,k0.a.y),fb=G(k0.b.x,k0.b.y),fr=dir*fa.Y>dir*fb.Y?fa:fb;
+        if(wc)svFront=dir*(G(wc.x,k0.y).Y-fr.Y)}
+      // landing: after contact, the frame where the feet are lowest in the image = back on the ground
+      let li=-1,ly=-Infinity;for(let i=bi+1;i<n;i++){if(dts[i]>0.7)break;if(dts[i]<0.1)continue;const k=ank(frames[i].P);if(k&&k.y>ly){ly=k.y;li=i}}
+      if(li>=0){const k=ank(frames[li].P),Ly=(G(k.a.x,k.a.y).Y+G(k.b.x,k.b.y).Y)/2;svLand=near?Ly:CRT.L-Ly}
+    }
+  }
   // elbow: median over the sharp frames 0.015-0.125 s before contact
   const ev=[];let pre=-1;
   for(let i=0;i<n;i++){const d=dts[i];if(d<-0.125||d>-0.015)continue;const g=frames[i];
@@ -1205,7 +1259,7 @@ function buildAna(frames,bi,auto){
     lmPre:pre>=0?frames[pre].P.map(p=>[+p.x.toFixed(4),+p.y.toFixed(4),+p.v.toFixed(2)]):null,
     tLow:low>=0?dts[low]:NaN,rise:(low>=0&&fin(h0))?(h0-H[low])*100:NaN,h0:fin(h0)?h0:null,
     turn:tmax>=0?turnS[tmax]:NaN,tTurn:tmax>=0?dts[tmax]:NaN,sep:tmax>=0&&fin(turnH[tmax])?turnS[tmax]-turnH[tmax]:NaN,
-    stance,cH,dec1:at(0.1),dec2:at(0.2),finH,across,leanFwd,front,s,
+    stance,cH,dec1:at(0.1),dec2:at(0.2),finH,across,leanFwd,front,svFwd,svLand,svFront,s,
     lm:P0.map(p=>[+p.x.toFixed(4),+p.y.toFixed(4),+p.v.toFixed(2)])};
 }
 function findContact(frames){
@@ -1215,15 +1269,33 @@ function findContact(frames){
   let bi=-1,bv=0;for(let i=1;i<sp.length-1;i++){const s=(sp[i-1]+sp[i]*2+sp[i+1])/4;if(s>bv&&frames[i].P){bv=s;bi=i}}
   return bi;
 }
+// refine an estimated contact: the frame where the ball is closest to the hitting hand (within racket reach)
+async function refineContactWithBall(frames,bi){
+  const P=frames[bi]&&frames[bi].P;if(!P)return{bi,src:'hand'};
+  const HW=hitIdx()[2],tor=metrics(P).torso,W=v.videoWidth,H=v.videoHeight;if(!tor)return{bi,src:'hand'};
+  const tc=frames[bi].t,ta=Math.max(0,tc-0.25),tb=Math.min(v.duration,tc+0.25),dt=1/anaFps(),n=Math.max(1,Math.round((tb-ta)/dt));
+  const r=ballROI(),scale=Math.min(1,1600/r.w),raw=[];let prevFp=null;
+  for(let i=0;i<=n;i++){if(state.cancel)break;await seek(ta+i*dt);const fp=frameFingerprint();if(prevFp&&fp&&fpDiff(fp,prevFp)<0.05)continue;prevFp=fp;
+    raw.push({t:v.currentTime,g:grabFrame(r,scale)});if(raw.length>=3){const k=raw.length-2;raw[k].c=blobsFrom(raw[k-1].g,raw[k].g,raw[k+1].g,r,scale).s}if(raw.length>3)raw[raw.length-4].g=null}
+  const wristAt=t=>{let w=null,bd=1;for(const f of frames){if(!f.P||f.P[HW].v<0.3)continue;const d=Math.abs(f.t-t);if(d<bd){bd=d;w=f.P[HW]}}return bd<=0.08?w:null};
+  let bt=null,bd=Infinity;
+  for(const f of raw){if(!f.c)continue;const w=wristAt(f.t);if(!w)continue;
+    for(const b of f.c){const d=Math.hypot((b.x-w.x)*W,(b.y-w.y)*H)/tor;if(d<2&&d<bd){bd=d;bt=f.t}}}
+  if(bt==null)return{bi,src:'hand'};
+  let k=bi;frames.forEach((f,i)=>{if(f.P&&Math.abs(f.t-bt)<Math.abs(frames[k].t-bt))k=i});
+  return{bi:k,src:'bal'};
+}
 async function analyzeClip(c,prog){
   const hasM=fin(c.tcManual);
   const ta=hasM?Math.max(0,Math.min(c.t0,c.tcManual-0.8)):c.t0,tb=hasM?Math.min(v.duration||c.t1,Math.max(c.t1,c.tcManual+0.5)):c.t1;
   const frames=await scanFrames(c.crop,ta,tb,prog,c.target);if(!frames)return false;
   let bi=-1,manual=false;
   if(hasM){frames.forEach((f,i)=>{if(f.P&&Math.abs(f.t-c.tcManual)<=0.15&&(bi<0||Math.abs(f.t-c.tcManual)<Math.abs(frames[bi].t-c.tcManual)))bi=i});manual=true}
-  if(bi<0)bi=findContact(frames);
+  let src=manual?'hand':'hand';
+  if(bi<0){bi=findContact(frames);if(bi>=0){try{const rr=await refineContactWithBall(frames,bi);bi=rr.bi;src=rr.src}catch(e){console.warn(e)}}}
   if(bi<0){const tgt=c.t0+(c.t1-c.t0)*0.55;bi=frames.findIndex(f=>f.P&&f.t>=tgt)}
   c.ana=bi>=0?buildAna(frames,bi,!manual):{failed:true};
+  if(c.ana&&!c.ana.failed&&!manual)c.ana.src=src;
   if(manual&&c.ana&&!c.ana.failed){c.ana.tc=c.tcManual;c.ana.auto=false}// the moment you chose is the moment shown
   return true;
 }
@@ -1268,6 +1340,7 @@ $('#bPrevC').onclick=()=>gotoContact(-1);$('#bNextC').onclick=()=>gotoContact(1)
 
 const fmtS=x=>fin(x)?(x>0?'+':x<0?'−':'')+Math.abs(x).toFixed(2).replace('.',',')+' s':'–';
 const fmtP=x=>fin(x)?(x>=0?'+':'−')+Math.abs(Math.round(x))+'%':'–';
+const fmtM=x=>fin(x)?(x>0.005?'+':x<-0.005?'−':'')+Math.abs(x).toFixed(2).replace('.',',')+' m':'–';
 const fmtSg=x=>fin(x)?(x>0.5?'+':x<-0.5?'−':'')+Math.abs(Math.round(x)):'–';
 const fmtD=(x,dg)=>fin(x)?(x<0?'−':'')+Math.abs(x).toFixed(dg==null?1:dg).replace('.',','):'–';
 const needsAna=c=>!c.ana||c.ana.failed||c.ana.v!==AV;
@@ -1281,6 +1354,9 @@ const COLS=[
   ['Elb.','Elleboog slagarm, gemeten in de scherpe frames vlak vóór het raken (0,02–0,12 s)',a=>r0(a.elbow)+'°','elbow'],
   ['Romp→','Romphelling in je slagrichting op het raken: + = naar voren, de bal in; − = naar achteren, van de bal weg (zinvol als je van opzij gefilmd bent)',a=>fmtSg(a.leanFwd)+'°','leanFwd',x=>fmtSg(x)+'°'],
   ['Raakpunt','Hand t.o.v. je heup in de slagrichting op het raken (× romplengte): + = vóór je lichaam; 0 of − = naast/achter (zinvol van opzij gefilmd)',a=>fmtD(a.front),'front',x=>fmtD(x)],
+  ['Heup→','Hoeveel je heup naar voren (richting net) gaat van je laagste punt tot het raken, in meters. Vooral voor de service; vereist baankalibratie',a=>fmtM(a.svFwd),'svFwd',fmtM],
+  ['Vóór voet','Hoeveel je hand op het raakmoment vóór je voorste voet zit, richting net, in meters. Vereist baankalibratie',a=>fmtM(a.svFront),'svFront',fmtM],
+  ['Landing','Waar je landt na de slag, gemeten vanaf je eigen baseline: + = in het veld, − = erachter (meters). Vereist baankalibratie',a=>fmtM(a.svLand),'svLand',fmtM],
   ['Draai','Maximaal indraaien van je schouders (schatting), en wanneer',a=>r0(a.turn)+'° '+fmtS(a.tTurn).replace(' s',''),'turn'],
   ['Scheid.','Verschil schouder- vs heupdraai op het max. indraaien',a=>r0(a.sep)+'°','sep'],
   ['Stand','Afstand tussen je enkels op het raken (× romplengte)',a=>fmtD(a.stance),'stance',x=>fmtD(x)],
@@ -1299,10 +1375,10 @@ function renderAna(){
   if(!list.length){el.innerHTML='';return}
   let h='<div id="anaScroll" style="overflow:auto;max-height:38vh"><table class="ana"><tr><th>Slag</th><th>Raak</th>'+COLS.map(c=>'<th title="'+c[1]+'">'+c[0]+'</th>').join('')+'</tr>';
   for(const c of list){const a=c.ana,L=LABELS[c.label];const old=a.v!==AV;
-    h+='<tr class="row'+(c.id===state.sel?' sel':'')+'" data-id="'+c.id+'"><td><span class="dot" style="background:'+L.color+'"></span>'+L.name.slice(0,2)+' '+numberOf(c)+(old?' <span title="Opnieuw analyseren" style="color:#fbbf24">!</span>':'')+'</td><td>'+fmt(a.tc).replace(/\.\d+$/,'')+(a.auto?'':'*')+'</td>'+COLS.map(col=>'<td>'+(old&&a[col[3]]==null?'–':col[2](a))+'</td>').join('')+'</tr>'}
+    h+='<tr class="row'+(c.id===state.sel?' sel':'')+'" data-id="'+c.id+'"><td><span class="dot" style="background:'+L.color+'"></span>'+L.name.slice(0,2)+' '+numberOf(c)+(old?' <span title="Opnieuw analyseren" style="color:#fbbf24">!</span>':'')+'</td><td>'+fmt(a.tc).replace(/\.\d+$/,'')+(a.auto?(a.src==='bal'?'<span title="Automatisch, bepaald met de bal" style="color:#fde047">•</span>':''):'*')+'</td>'+COLS.map(col=>'<td>'+(old&&a[col[3]]==null?'–':col[2](a))+'</td>').join('')+'</tr>'}
   for(const k in LABELS){const g=list.filter(c=>c.label===k);if(g.length<2)continue;
     h+='<tr class="avg"><td>gem. '+LABELS[k].name.slice(0,2)+' ('+g.length+')</td><td></td>'+COLS.map(col=>{const x=avgOf(g,col[3]);return'<td>'+(col[4]?col[4](x):r0(x)+(col[2]({[col[3]]:0}).includes('%')?'%':'°'))+'</td>'}).join('')+'</tr>'}
-  el.innerHTML=h+'</table></div><div class="note">* = raakmoment handmatig gezet. Beweeg over een kolomkop voor uitleg. Draai/scheiding zijn ruwe schattingen uit de schijnbare breedte van schouders en heupen.</div>';
+  el.innerHTML=h+'</table></div><div class="note">* = raakmoment handmatig gezet · <span style="color:#fde047">•</span> = automatisch bepaald met de bal. Beweeg over een kolomkop voor uitleg. Draai/scheiding zijn ruwe schattingen uit de schijnbare breedte van schouders en heupen.</div>';
 }
 window.__renderAna=renderAna;window.__renderPick=renderPick;
 $('#anaTable').addEventListener('click',e=>{const tr=e.target.closest('tr.row');if(!tr)return;const c=getClip(tr.dataset.id);if(!c)return;state.sel=c.id;v.pause();seekTo(c.ana.tc);render()});
@@ -1366,14 +1442,18 @@ $('#bSheet').onclick=async()=>{
       const L=LABELS[c.label];
       ctx.fillStyle='#161f1a';ctx.fillRect(ox,oy+TH,TW,CAP+CH);ctx.fillStyle=L.color;ctx.fillRect(ox,oy+TH,5,CAP+CH);
       ctx.textBaseline='top';ctx.fillStyle='#e7efe9';ctx.font='700 16px system-ui,sans-serif';ctx.fillText('#'+indexOf(c)+' '+L.name+' '+numberOf(c),ox+14,oy+TH+8);
-      ctx.fillStyle='#8fa197';ctx.font='13px system-ui,sans-serif';ctx.textAlign='right';ctx.fillText(fmt(a.tc)+(a.auto?'':' (handmatig)'),ox+TW-10,oy+TH+10);ctx.textAlign='left';
+      ctx.fillStyle='#8fa197';ctx.font='13px system-ui,sans-serif';ctx.textAlign='right';ctx.fillText(fmt(a.tc)+(a.auto?(a.src==='bal'?' (auto, bal)':' (auto)'):' (handmatig)'),ox+TW-10,oy+TH+10);ctx.textAlign='left';
       ctx.fillStyle='#cfd8d2';ctx.font='12.5px system-ui,sans-serif';
       ctx.fillText('knie '+r0(a.knee)+'° · diepst '+r0(a.kneeMin)+'° · romp '+r0(a.trunk)+'° · elleboog '+r0(a.elbow)+'°'+(a.elbowPre?' (vlak vóór)':''),ox+14,oy+TH+32);
       if(a.v===AV){
         ctx.fillText('draai '+r0(a.turn)+'° ('+fmtS(a.tTurn)+') · scheiding '+r0(a.sep)+'° · stand '+fmtD(a.stance)+' · raakh. '+fmtD(a.cH),ox+14,oy+TH+50);
         ctx.fillText('na raken: +0,1s '+r0(a.dec1)+'% · +0,2s '+r0(a.dec2)+'% · eind↑ '+fmtD(a.finH)+(c.label==='forehand'?' · over '+fmtD(a.across):''),ox+14,oy+TH+66);
+        if(c.label==='service'){
+          ctx.fillStyle=fin(a.svFwd)?'#cfd8d2':'#fbbf24';
+          ctx.fillText(fin(a.svFwd)||fin(a.svLand)?'heup→ '+fmtM(a.svFwd)+' · vóór voet '+fmtM(a.svFront)+' · landing '+fmtM(a.svLand):'Service naar voren: kalibreer de baan en analyseer opnieuw',ox+14,oy+TH+82);ctx.fillStyle='#cfd8d2';
+        }else{
         const lf=a.leanFwd;ctx.fillStyle=fin(lf)?(lf<-8?'#fca5a5':lf>3?'#86efac':'#cfd8d2'):'#cfd8d2';
-        ctx.fillText('romp→ '+fmtSg(lf)+'° '+(fin(lf)?(lf>3?'(naar voren)':lf<-3?'(naar achteren)':'(rechtop)'):'')+' · raakpunt '+fmtD(a.front)+(fin(a.front)?(a.front>0.15?' (vóór)':' (naast/achter)'):''),ox+14,oy+TH+82);ctx.fillStyle='#cfd8d2';
+        ctx.fillText('romp→ '+fmtSg(lf)+'° '+(fin(lf)?(lf>3?'(naar voren)':lf<-3?'(naar achteren)':'(rechtop)'):'')+' · raakpunt '+fmtD(a.front)+(fin(a.front)?(a.front>0.15?' (vóór)':' (naast/achter)'):''),ox+14,oy+TH+82);ctx.fillStyle='#cfd8d2';}
         const cx=ox+14,cw=TW-28,ch1=66;let cy=oy+TH+CAP+4;
         drawCurveBox(ctx,cx,cy,cw,ch1,yr,[{pts:relSeries(a),color:L.color,lw:2.5,low:fin(a.tLow)&&fin(a.rise)?[a.tLow,-a.rise]:null}],{fs:10,ystep:10,zero:true,title:'hoogte · laagst '+fmtS(a.tLow)+', daarna '+fmtP(a.rise)});
         cy+=ch1+8;
@@ -1394,7 +1474,7 @@ $('#bSheet').onclick=async()=>{
       ctx.fillStyle=LABELS[k].color;ctx.fillRect(14,fy+3,10,10);ctx.fillStyle='#cfd8d2';
       ctx.fillText(LABELS[k].name+' ('+g.length+'):  knie '+r0(av('knee'))+'° · diepst '+r0(av('kneeMin'))+'° · laagst '+fmtS(av('tLow'))+' · omhoog '+fmtP(av('rise'))+' · romp '+r0(av('trunk'))+'° · elleboog '+r0(av('elbow'))+'°',30,fy);fy+=22;
       ctx.fillText('draai '+r0(av('turn'))+'° ('+fmtS(av('tTurn'))+') · scheiding '+r0(av('sep'))+'° · stand '+fmtD(av('stance'))+' · raakh. '+fmtD(av('cH'))+' · +0,1s '+r0(av('dec1'))+'% · +0,2s '+r0(av('dec2'))+'% · eind↑ '+fmtD(av('finH'))+(k==='forehand'?' · over '+fmtD(av('across')):''),30,fy);fy+=22;
-      ctx.fillText('romp→ '+fmtSg(av('leanFwd'))+'° · raakpunt '+fmtD(av('front')),30,fy);fy+=26}
+      ctx.fillText(k==='service'?'heup→ '+fmtM(av('svFwd'))+' · vóór voet '+fmtM(av('svFront'))+' · landing '+fmtM(av('svLand')):'romp→ '+fmtSg(av('leanFwd'))+'° · raakpunt '+fmtD(av('front')),30,fy);fy+=26}
     return await new Promise(res=>cv.toBlob(b=>res({blob:b}),'image/png'));
   });
   if(r&&r.blob)await offerFile(r.blob,base()+'_analyse'+(state.filter?'_'+state.filter:'')+'.png');
@@ -1402,8 +1482,8 @@ $('#bSheet').onclick=async()=>{
 $('#bCsv').onclick=()=>{
   const list=strokeClips().filter(c=>c.ana&&!c.ana.failed);if(!list.length)return;
   const f=x=>fin(x)?(+x).toFixed(2).replace('.',','):'';
-  const keys=['knee','kneeL','kneeR','kneeMin','tLow','rise','trunk','elbow','turn','tTurn','sep','stance','cH','dec1','dec2','finH','across','leanFwd','front'];
-  const names=['knie_raak','knie_links','knie_rechts','diepste_knie','laagste_punt_s','omhoog_pct','romp','elleboog','draai','draai_moment_s','scheiding','stand','raakhoogte','snelheid_01s_pct','snelheid_02s_pct','eindhoogte','over_schouder','romp_slagrichting','raakpunt_voor_heup'];
+  const keys=['knee','kneeL','kneeR','kneeMin','tLow','rise','trunk','elbow','turn','tTurn','sep','stance','cH','dec1','dec2','finH','across','leanFwd','front','svFwd','svFront','svLand'];
+  const names=['knie_raak','knie_links','knie_rechts','diepste_knie','laagste_punt_s','omhoog_pct','romp','elleboog','draai','draai_moment_s','scheiding','stand','raakhoogte','snelheid_01s_pct','snelheid_02s_pct','eindhoogte','over_schouder','romp_slagrichting','raakpunt_voor_heup','heup_voorwaarts_m','hand_voor_voorste_voet_m','landing_in_veld_m'];
   const rows=[['nr','slag','label_nr','begin','einde','raakmoment','handmatig'].concat(names).join(';')];
   for(const c of list){const a=c.ana;rows.push([indexOf(c),LABELS[c.label].name,numberOf(c),f(c.t0),f(c.t1),f(a.tc),a.auto?'nee':'ja'].concat(keys.map(k=>f(a[k]))).join(';'))}
   offerFile('﻿'+rows.join('\r\n'),base()+'_analyse.csv');
@@ -1428,7 +1508,7 @@ const CAL_NAMES=m=>m==='service'?['nabije servicelijn, links (snijpunt met enkel
 function renderCal(){
   const el=$('#calInfo');if(!el)return;
   if(state.calMode){el.innerHTML='<b>Klik punt '+(state.calPts.length+1)+' van 4:</b> '+CAL_NAMES($('#calMode').value)[state.calPts.length]+'. <kbd>Esc</kbd> = stoppen.';return}
-  el.innerHTML=state.calEdit?'<b>Punten bijstellen:</b> sleep een punt, of kies er een (klik of <kbd>Tab</kbd>) en schuif met de pijltjes. <kbd>Esc</kbd> of <kbd>Enter</kbd> = klaar.':state.court?'Baan gekalibreerd. Vallen de blauwe lijnen niet precies over de echte lijnen? Klik op “Punten bijstellen”.':'Nog niet gekalibreerd: zonder kalibratie geen snelheid, diepte of in/uit.';
+  el.innerHTML=state.calEdit?'<b>Punten bijstellen:</b> sleep een punt, of kies er een (klik of <kbd>Tab</kbd>) en schuif met de pijltjes. <kbd>Esc</kbd> of <kbd>Enter</kbd> = klaar.':state.court?'Baan gekalibreerd. Vallen de blauwe lijnen niet precies over de echte lijnen? Klik op “Punten bijstellen”. De kalibratie wordt ook gebruikt voor de service-metingen in meters (analyseer daarna opnieuw).':'Nog niet gekalibreerd: zonder kalibratie geen snelheid, diepte of in/uit.';
   if($('#bCalEdit'))$('#bCalEdit').disabled=!state.court;
   $('#bCalib').classList.toggle('on',state.calMode);
 }
@@ -1695,6 +1775,25 @@ OVERLAYS.push((ctx,w,h,dpr)=>{if(!state.calEdit||!state.court)return;
     pill(ctx,String(i+1),q.x*w+18*dpr,q.y*h-16*dpr,12*dpr,sel?'#d4f53c':'#fff')});
   pill(ctx,'Sleep een punt of gebruik de pijltjes (Shift = 5 px) · Tab = volgend punt · Esc/Enter = klaar',w/2,24*dpr,12*dpr,'#fff')});
 
+
+
+/* ---------- layout v2: tabs + video fitted to the available space ---------- */
+function showTab(name){
+  document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===name));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('on',p.dataset.panel===name));
+  lsSet('tcp:tab',name);if(name==='ball')renderBall();
+}
+document.querySelectorAll('#tabs button').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
+showTab(lsGet('tcp:tab')||'clips');
+function fitStage(){
+  const w=$('#wrap'),ar=v.videoWidth&&v.videoHeight?v.videoWidth/v.videoHeight:16/9;
+  const W=w.clientWidth,H=w.clientHeight;if(!W||!H)return;
+  const sw=Math.min(W,H*ar);stage.style.width=Math.floor(sw)+'px';stage.style.height=Math.floor(sw/ar)+'px';
+}
+try{new ResizeObserver(fitStage).observe($('#wrap'))}catch(e){window.addEventListener('resize',fitStage)}
+v.addEventListener('loadedmetadata',fitStage);fitStage();
+// jump to the relevant tab when starting an action from the keyboard or toolbar
+$('#bAnalyze').addEventListener('click',()=>showTab('ana'));$('#bBall').addEventListener('click',()=>showTab('ball'));
 
 render();
 })();
