@@ -28,8 +28,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   await seekTo(+T0);await key('i');await seekTo(+T1);await key('r');await sleep(300);
   console.log('clip:',await toast());
   await ev("[...document.querySelectorAll('button,[data-tab]')].find(b=>/^\\s*Bal\\s*$/.test(b.textContent)).click();1");await sleep(300);
+  await ev("window.__ballDbg=true;1");
   const t0=Date.now();await ev("document.querySelector('#bBall').click();1");
   for(let i=0;i<1200;i++){await sleep(500);const t=await toast();if(/Bal gevolgd|mislukt|niet geladen/.test(t)&&!/Bal volgen in/.test(t)){console.log('na',((Date.now()-t0)/1000).toFixed(0)+'s:',t);if(/Bal gevolgd/.test(t))break}}
+  const dbg=await ev(`(()=>{const d=window.__ballDbg;if(!d||d===true)return null;const r4=x=>+x.toFixed(4);
+    return JSON.stringify({r:d.r,fps:25,frames:d.frames.map(f=>({t:f.t,c:f.c.map(c=>({x:r4(c.x),y:r4(c.y),a:c.a,yel:+c.yel.toFixed(1)})),boxes:f.boxes})),
+      tracks:(d.ev?d.ev.flights:d.tracks.map(t=>t.pts)).map(p=>({pts:p})),raw:d.tracks.length,fast:d.fast?d.fast.length:null,bounces:d.ev?d.ev.bounces:[],hits:d.ev?d.ev.hits:[]})})()`);
+  if(dbg){fs.writeFileSync(path.join(outDir,'app_dbg.json'),dbg);const D=JSON.parse(dbg);console.log('debug: baanstukken',D.raw,'na filter',D.fast,'vluchten',D.tracks.length,'| stuiten',D.bounces.map(b=>b.t.toFixed(2)).join(' '),'| slagen',D.hits.map(b=>b.t.toFixed(2)).join(' '))}
+  const fin_=await ev(`(()=>{const k=Object.keys(localStorage).find(k=>k.startsWith('tcp:clips:'));if(!k)return null;const c=JSON.parse(localStorage.getItem(k)).clips[0];return JSON.stringify({b:(c.ball.bounces||[]).map(b=>b.t.toFixed(2)+':'+(b.call||'?')+'/'+(b.half||'')),h:(c.ball.hits||[]).map(h=>h.t.toFixed(2)+'/'+(h.half||''))})})()`);
+  console.log('eindresultaat:',fin_);
   console.log('bal-paneel:',(await ev("(document.querySelector('[data-panel=ball]')||{}).innerText||''")).replace(/\s+/g,' ').slice(0,700));
   await ev("(()=>{const p=document.querySelector('[data-panel=ball]');const row=[...p.querySelectorAll('tr,div')].reverse().find(e=>/^\\s*Punt 1/.test(e.textContent)&&e.textContent.length<120);if(row)row.click();return !!row})()");await sleep(500);
   for(const s of shots.split(',').filter(Boolean)){await seekTo(+s);await sleep(600);const sh=await send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(outDir,'ball_'+s+'.png'),Buffer.from(sh.result.data,'base64'))}

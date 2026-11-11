@@ -1745,6 +1745,8 @@ OVERLAYS.push((ctx,w,h,dpr)=>{
       ctx.strokeStyle='rgba(253,224,71,.9)';ctx.lineWidth=2*dpr;ctx.beginPath();pts.forEach((q,i)=>{const X=q[1]*w,Y=q[2]*h;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke();
       const q=pts[pts.length-1];if(t-q[0]<0.15){ctx.fillStyle='#fde047';ctx.beginPath();ctx.arc(q[1]*w,q[2]*h,4*dpr,0,7);ctx.fill()}}
     for(const b of ballBounces(c.ball)){if(b.t>t+1e-3)continue;ctx.strokeStyle=b.call==='uit'?'#f87171':b.call==='in'?'#4ade80':'#fbbf24';ctx.lineWidth=2.5*dpr;ctx.beginPath();ctx.arc(b.x*w,b.y*h,8*dpr,0,7);ctx.stroke()}
+    // hits (racket contact): small white cross
+    for(const k of (c.ball.hits||[])){if(k.t>t+1e-3||t-k.t>3)continue;const X=k.x*w,Y=k.y*h,s=6*dpr;ctx.strokeStyle='#fff';ctx.lineWidth=2*dpr;ctx.beginPath();ctx.moveTo(X-s,Y-s);ctx.lineTo(X+s,Y+s);ctx.moveTo(X+s,Y-s);ctx.lineTo(X-s,Y+s);ctx.stroke()}
   }
 });
 
@@ -1796,13 +1798,17 @@ function blobsFrom(prev,cur,next,r,scale,VW,VH,allowed,noIso){const P=BALLP;
   const I=new Int32Array((w+1)*(h+1));for(let y=0;y<h;y++){let s=0;for(let x=0;x<w;x++){s+=loose[y*w+x];I[(y+1)*(w+1)+x+1]=I[y*(w+1)+x+1]+s}}
   const box=(x0,y0,x1,y1)=>{x0=Math.max(0,x0);y0=Math.max(0,y0);x1=Math.min(w,x1);y1=Math.min(h,y1);if(x1<=x0||y1<=y0)return 0;return I[y1*(w+1)+x1]-I[y0*(w+1)+x1]-I[y1*(w+1)+x0]+I[y0*(w+1)+x0]};
   const lab=new Int32Array(n),out=[];let id=0;const stack=[];const maxA=P.maxA*scale*scale;
-  for(let i=0;i<n;i++){if(!mask[i]||lab[i])continue;id++;let a=0,sx=0,sy=0,x0=w,x1=0,y0=h,y1=0,ys=0;stack.push(i);lab[i]=id;
-    while(stack.length){const k=stack.pop(),x=k%w,y=(k/w)|0;a++;sx+=x;sy+=y;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;
+  for(let i=0;i<n;i++){if(!mask[i]||lab[i])continue;id++;let a=0,sx=0,sy=0,sxx=0,syy=0,sxy=0,x0=w,x1=0,y0=h,y1=0,ys=0;stack.push(i);lab[i]=id;
+    while(stack.length){const k=stack.pop(),x=k%w,y=(k/w)|0;a++;sx+=x;sy+=y;sxx+=x*x;syy+=y*y;sxy+=x*y;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;
       const bR=(prev.R[k]+next.R[k])/2,bG=(prev.G[k]+next.G[k])/2,bB=(prev.B[k]+next.B[k])/2;ys+=((cur.R[k]-bR)+(cur.G[k]-bG))/2-(cur.B[k]-bB);
       for(const q of[k-1,k+1,k-w,k+w,k-w-1,k-w+1,k+w-1,k+w+1]){if(q<0||q>=n||lab[q]||!mask[q])continue;if(Math.abs((q%w)-x)>1)continue;lab[q]=id;stack.push(q)}}
-    const bw=x1-x0+1,bh=y1-y0+1;if(a<2||a>maxA||Math.max(bw,bh)/Math.min(bw,bh)>5||a<0.3*bw*bh)continue;
+    const bw=x1-x0+1,bh=y1-y0+1;if(a<2||a>maxA)continue;
+    // shape along the blob's own axis: round (slow ball) or a thin streak (fast ball, motion blur near the camera)
+    const mx=sx/a,my=sy/a,cxx=sxx/a-mx*mx+1/12,cyy=syy/a-my*my+1/12,cxy=sxy/a-mx*my,tr=cxx+cyy,dt_=Math.sqrt(Math.max(0,(cxx-cyy)**2/4+cxy*cxy)),l1=tr/2+dt_,l2=Math.max(0.08,tr/2-dt_);
+    const elong=Math.sqrt(l1/l2),streak=elong>3.5;
+    if(streak){if(elong>14||Math.sqrt(l2)>3.5*Math.max(scale,0.5)||a<5)continue}else if(a<0.3*bw*bh)continue;
     // isolation: a ball is a small island of motion; an arm/racket/leg sits in a big moving area
-    const m=Math.max(6,Math.max(bw,bh)*1.5),around=box(x0-m,y0-m,x1+1+m,y1+1+m);if(!noIso&&around>P.iso*a+20)continue;
+    const m=streak?Math.max(6,4*Math.sqrt(l2)):Math.max(6,Math.max(bw,bh)*1.5),around=box(x0-m,y0-m,x1+1+m,y1+1+m);if(!noIso&&around>P.iso*a+20+(streak?a:0))continue;
     const vx=r.x+(sx/a+0.5)/scale,vy=r.y+(sy/a+0.5)/scale;if(allowed&&!allowed(vx,vy))continue;
     const yel=ys/a;out.push({x:(r.x+(sx/a+0.5)/scale)/VW,y:(r.y+(sy/a+0.5)/scale)/VH,a,yel,sc:Math.sqrt(a)*(1+Math.max(0,yel)/30)})}
   out.sort((p,q)=>q.sc-p.sc);
@@ -1838,6 +1844,38 @@ function linkTracks(frames,W,H){
     if(pts.length<5){for(const p of pts)p.c.used=false;continue}
     tracks.push({pts:pts.map(p=>({t:F[p.k].t,x:p.c.x,y:p.c.y,weak:false}))})}
   return tracks.sort((a,b)=>a.pts[0].t-b.pts[0].t);
+}
+// Join track pieces into flights and find events. A bounce or a hit often breaks a track in two; the event sits in the gap.
+// boxesAt(t) -> person boxes [{x0,x1,y0,y1}] (normalised) at time t. Event near a person and above the feet = hit, else
+// a sharp change from "going down" to "going up (less down)" in the image = bounce.
+// Returns {flights:[[{t,x,y}]], bounces:[{t,x,y}], hits:[{t,x,y}]}
+function ballEvents(tracks,boxesAt,W,H){
+  const T=tracks.map(t=>t.pts.slice()).sort((a,b)=>a[0].t-b[0].t);
+  const vel=(p,i,dir)=>{// mean velocity (px/s) over up to 2 steps on one side of point i
+    const j=Math.max(0,Math.min(p.length-1,i+2*dir));if(j===i)return null;const a=dir>0?p[i]:p[j],b=dir>0?p[j]:p[i],dt=b.t-a.t;if(dt<=0)return null;
+    return[(b.x-a.x)*W/dt,(b.y-a.y)*H/dt]};
+  // 1. chain pieces: B follows A when it starts shortly after A ends, close to where A was heading
+  const used=new Set(),flights=[];
+  for(let i=0;i<T.length;i++){if(used.has(i))continue;used.add(i);let path=T[i].slice();const joins=[];
+    for(;;){const e=path[path.length-1],ve=vel(path,path.length-1,-1)||[0,0],sp=Math.hypot(ve[0],ve[1]);let bj=-1,bd=Infinity;
+      for(let j=0;j<T.length;j++){if(used.has(j))continue;const s=T[j][0],gap=s.t-e.t;if(gap<=0||gap>0.25)continue;
+        const d=Math.hypot((s.x-e.x)*W,(s.y-e.y)*H),lim=Math.max(0.05*H,sp*gap*1.6+0.02*H);if(d<lim&&d<bd){bd=d;bj=j}}
+      if(bj<0)break;used.add(bj);joins.push(path.length);path=path.concat(T[bj])}
+    flights.push({path,joins})}
+  // 2. events: direction changes inside a flight, and every join
+  const isHit=(p)=>{const bx=boxesAt?boxesAt(p.t):[];return bx.some(b=>{const mw=(b.x1-b.x0)*0.25,mh=(b.y1-b.y0)*0.1;return p.x>b.x0-mw&&p.x<b.x1+mw&&p.y>b.y0-mh*2&&p.y<b.y1-(b.y1-b.y0)*0.2})};
+  const bounces=[],hits=[];
+  for(const f of flights){const p=f.path;
+    for(let i=1;i<p.length-1;i++){const vi=vel(p,i,-1),vo=vel(p,i,1);if(!vi||!vo)continue;
+      const si=Math.hypot(vi[0],vi[1]),so=Math.hypot(vo[0],vo[1]);if(si<1||so<1)continue;
+      const cos=(vi[0]*vo[0]+vi[1]*vo[1])/(si*so),dvy=vo[1]-vi[1];
+      const turn=cos<Math.cos(35*Math.PI/180),dropDown=vi[1]>0&&dvy<-Math.max(0.06*H,0.35*si);
+      if(!(turn||dropDown||f.joins.includes(i)))continue;
+      const ev={t:p[i].t,x:p[i].x,y:p[i].y};
+      if(isHit(p[i])){if(turn||f.joins.includes(i))hits.push(ev)}
+      else if(dropDown)bounces.push(ev)}}
+  const dedup=L=>{L.sort((a,b)=>a.t-b.t);const o=[];for(const e of L)if(!o.length||e.t-o[o.length-1].t>0.2)o.push(e);return o};
+  return{flights:flights.map(f=>f.path),bounces:dedup(bounces),hits:dedup(hits)};
 }
 /*BALL-DETECT-END*/
 // a real ball moves fast and smoothly; feet and noise wiggle
@@ -1908,25 +1946,38 @@ async function analyzeBall(c,prog){
   const outside=b=>boxes.every(bx=>b.x<bx.x0||b.x>bx.x1||b.y<bx.y0||b.y>bx.y1);
   for(let i=0;i<=n;i++){if(state.cancel)return false;await seek(ta+i*dt);const fp=frameFingerprint();
     if(prevFp&&fp&&fpDiff(fp,prevFp)<0.05){prog(i/n);continue}prevFp=fp;
-    if(k2++%2===0){const nb=[];
-      if(POSE.det)for(const b of detectPeopleBoxes()){const mx=(b.x1-b.x0)*0.08,my=(b.y1-b.y0)*0.05;nb.push({x0:b.x0-mx,x1:b.x1+mx,y0:b.y0-my,y1:b.y1+my})}// everyone on court, incl. far side
+    // people boxes every frame (players move fast; a stale box lets a leg or racket through as "ball")
+    {k2++;const nb=[];
+      if(POSE.det)for(const b of detectPeopleBoxes()){const mx=(b.x1-b.x0)*0.15,bh=b.y1-b.y0;nb.push({x0:b.x0-mx,x1:b.x1+mx,y0:b.y0-bh*0.08,y1:b.y1+bh*0.1})}// everyone on court, incl. far side
       else if(POSE.lmImg)for(const P of detectAll(true))nb.push(bodyBox(P));
       if(tr||c.crop){const P=detectFor(c.crop,tr);if(P)nb.push(bodyBox(P))}
       if(nb.length||!(POSE.lmImg||POSE.det))boxes=nb}
     raw.push({t:v.currentTime,g:grabFrame(r,scale),boxes});
-    if(raw.length>=3){const k=raw.length-2,bl=raw[k].boxes,out=b=>bl.every(bx=>b.x<bx.x0||b.x>bx.x1||b.y<bx.y0||b.y>bx.y1);
+    // inside a person box only clearly yellow blobs count (ball at the feet, the toss above the head); legs, arms, shoes are not yellow
+    if(raw.length>=3){const k=raw.length-2,bl=raw[k].boxes,out=b=>b.yel>15||bl.every(bx=>b.x<bx.x0||b.x>bx.x1||b.y<bx.y0||b.y>bx.y1);
       const bb=blobsFrom(raw[k-1].g,raw[k].g,raw[k+1].g,r,scale,v.videoWidth,v.videoHeight,space);raw[k].c=bb.s.filter(out);raw[k].w=bb.w.filter(out)}
     if(raw.length>3)raw[raw.length-4].g=null;
     prog(i/n)}
-  const frames=raw.filter(f=>f.c).map(f=>({t:f.t,c:f.c,w:f.w}));
+  const frames=raw.filter(f=>f.c).map(f=>({t:f.t,c:f.c,w:f.w,boxes:f.boxes}));
   const W=v.videoWidth,H=v.videoHeight,tracks=linkTracks(frames,W,H);
+  const boxesAt=t=>{let b=null,bd=1;for(const f of frames){const d=Math.abs(f.t-t);if(d<bd){bd=d;b=f.boxes}}return b||[]};
+  const inBox=(p)=>boxesAt(p.t).some(b=>p.x>b.x0&&p.x<b.x1&&p.y>b.y0&&p.y<b.y1);
+  if(window.__ballDbg)window.__ballDbg={r,frames,tracks};// for the test scripts (tools/ball)
   const enc=pts=>pts.map(p=>[+p.t.toFixed(3),+p.x.toFixed(4),+p.y.toFixed(4)]);
-  const res={v:4,tc,rally,tracks:[],bounces:[],nDet:frames.reduce((a,f)=>a+f.c.length,0)};
+  const res={v:5,tc,rally,tracks:[],bounces:[],hits:[],nDet:frames.reduce((a,f)=>a+f.c.length,0)};
   if(rally){
-    const fast=tracks.filter(t=>trackStraight(t)>=0.7&&trackSpeed(t)>=(t.pts[0].y<0.5?0.1:0.35));
-    res.tracks=fast.map(t=>enc(t.pts));
-    let all=[];for(const t of fast)all=all.concat(findBounces(t.pts,t.pts[0].t+0.1));
-    all.sort((a,b)=>a.t-b.t);for(const b of all)if(res.bounces.every(o=>Math.abs(o.t-b.t)>0.2))res.bounces.push(classifyBounce(b,dt));
+    // physics-linked tracks are already smooth: keep anything moving, drop pieces that mostly lie on a person (legs, racket)
+    const fast=tracks.filter(t=>trackStraight(t)>=0.6&&trackSpeed(t)>=0.08&&t.pts.filter(inBox).length<=t.pts.length*0.5);
+    const ev=ballEvents(fast,boxesAt,W,H);
+    res.tracks=ev.flights.map(enc);
+    // tennis rule: the ball does not bounce twice on one side. Two events shortly after each other on the same half:
+    // the first is the bounce, the second the opponent's hit (far players are often too small for the person detector)
+    const evs=ev.bounces.map(b=>({...classifyBounce(b,dt),kind:'b'})).concat(ev.hits.map(h=>({...classifyBounce({...h},dt),kind:'h'}))).sort((a,b)=>a.t-b.t);
+    // only on the far half: near players are big enough for the person boxes, and a hit in the air near the camera would project towards the net
+    for(let i=1;i<evs.length;i++){const p=evs[i-1],q=evs[i];if(q.kind==='b'&&p.kind==='b'&&p.half==='ver'&&q.half==='ver'&&q.t-p.t<1.6)q.kind='h'}
+    res.bounces=evs.filter(e=>e.kind==='b').map(({kind,...b})=>b);
+    res.hits=evs.filter(e=>e.kind==='h').map(h=>({t:+h.t.toFixed(3),x:+h.x.toFixed(4),y:+h.y.toFixed(4),half:h.half}));
+    if(window.__ballDbg)Object.assign(window.__ballDbg,{fast,ev});
   }else{
     const path=pickBallTrack(tracks,tc);
     if(path){res.tracks=[enc(path)];const b=findBounces(path,tc+0.15)[0];

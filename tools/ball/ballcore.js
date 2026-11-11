@@ -28,13 +28,17 @@ function blobsFrom(prev,cur,next,r,scale,VW,VH,allowed,noIso){const P=BALLP;
   const I=new Int32Array((w+1)*(h+1));for(let y=0;y<h;y++){let s=0;for(let x=0;x<w;x++){s+=loose[y*w+x];I[(y+1)*(w+1)+x+1]=I[y*(w+1)+x+1]+s}}
   const box=(x0,y0,x1,y1)=>{x0=Math.max(0,x0);y0=Math.max(0,y0);x1=Math.min(w,x1);y1=Math.min(h,y1);if(x1<=x0||y1<=y0)return 0;return I[y1*(w+1)+x1]-I[y0*(w+1)+x1]-I[y1*(w+1)+x0]+I[y0*(w+1)+x0]};
   const lab=new Int32Array(n),out=[];let id=0;const stack=[];const maxA=P.maxA*scale*scale;
-  for(let i=0;i<n;i++){if(!mask[i]||lab[i])continue;id++;let a=0,sx=0,sy=0,x0=w,x1=0,y0=h,y1=0,ys=0;stack.push(i);lab[i]=id;
-    while(stack.length){const k=stack.pop(),x=k%w,y=(k/w)|0;a++;sx+=x;sy+=y;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;
+  for(let i=0;i<n;i++){if(!mask[i]||lab[i])continue;id++;let a=0,sx=0,sy=0,sxx=0,syy=0,sxy=0,x0=w,x1=0,y0=h,y1=0,ys=0;stack.push(i);lab[i]=id;
+    while(stack.length){const k=stack.pop(),x=k%w,y=(k/w)|0;a++;sx+=x;sy+=y;sxx+=x*x;syy+=y*y;sxy+=x*y;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;
       const bR=(prev.R[k]+next.R[k])/2,bG=(prev.G[k]+next.G[k])/2,bB=(prev.B[k]+next.B[k])/2;ys+=((cur.R[k]-bR)+(cur.G[k]-bG))/2-(cur.B[k]-bB);
       for(const q of[k-1,k+1,k-w,k+w,k-w-1,k-w+1,k+w-1,k+w+1]){if(q<0||q>=n||lab[q]||!mask[q])continue;if(Math.abs((q%w)-x)>1)continue;lab[q]=id;stack.push(q)}}
-    const bw=x1-x0+1,bh=y1-y0+1;if(a<2||a>maxA||Math.max(bw,bh)/Math.min(bw,bh)>5||a<0.3*bw*bh)continue;
+    const bw=x1-x0+1,bh=y1-y0+1;if(a<2||a>maxA)continue;
+    // shape along the blob's own axis: round (slow ball) or a thin streak (fast ball, motion blur near the camera)
+    const mx=sx/a,my=sy/a,cxx=sxx/a-mx*mx+1/12,cyy=syy/a-my*my+1/12,cxy=sxy/a-mx*my,tr=cxx+cyy,dt_=Math.sqrt(Math.max(0,(cxx-cyy)**2/4+cxy*cxy)),l1=tr/2+dt_,l2=Math.max(0.08,tr/2-dt_);
+    const elong=Math.sqrt(l1/l2),streak=elong>3.5;
+    if(streak){if(elong>14||Math.sqrt(l2)>3.5*Math.max(scale,0.5)||a<5)continue}else if(a<0.3*bw*bh)continue;
     // isolation: a ball is a small island of motion; an arm/racket/leg sits in a big moving area
-    const m=Math.max(6,Math.max(bw,bh)*1.5),around=box(x0-m,y0-m,x1+1+m,y1+1+m);if(!noIso&&around>P.iso*a+20)continue;
+    const m=streak?Math.max(6,4*Math.sqrt(l2)):Math.max(6,Math.max(bw,bh)*1.5),around=box(x0-m,y0-m,x1+1+m,y1+1+m);if(!noIso&&around>P.iso*a+20+(streak?a:0))continue;
     const vx=r.x+(sx/a+0.5)/scale,vy=r.y+(sy/a+0.5)/scale;if(allowed&&!allowed(vx,vy))continue;
     const yel=ys/a;out.push({x:(r.x+(sx/a+0.5)/scale)/VW,y:(r.y+(sy/a+0.5)/scale)/VH,a,yel,sc:Math.sqrt(a)*(1+Math.max(0,yel)/30)})}
   out.sort((p,q)=>q.sc-p.sc);
@@ -71,4 +75,36 @@ function linkTracks(frames,W,H){
     tracks.push({pts:pts.map(p=>({t:F[p.k].t,x:p.c.x,y:p.c.y,weak:false}))})}
   return tracks.sort((a,b)=>a.pts[0].t-b.pts[0].t);
 }
-if(typeof module!=='undefined')module.exports={ballPrep,blobsFrom,linkTracks,BALLP,ballSpace};
+// Join track pieces into flights and find events. A bounce or a hit often breaks a track in two; the event sits in the gap.
+// boxesAt(t) -> person boxes [{x0,x1,y0,y1}] (normalised) at time t. Event near a person and above the feet = hit, else
+// a sharp change from "going down" to "going up (less down)" in the image = bounce.
+// Returns {flights:[[{t,x,y}]], bounces:[{t,x,y}], hits:[{t,x,y}]}
+function ballEvents(tracks,boxesAt,W,H){
+  const T=tracks.map(t=>t.pts.slice()).sort((a,b)=>a[0].t-b[0].t);
+  const vel=(p,i,dir)=>{// mean velocity (px/s) over up to 2 steps on one side of point i
+    const j=Math.max(0,Math.min(p.length-1,i+2*dir));if(j===i)return null;const a=dir>0?p[i]:p[j],b=dir>0?p[j]:p[i],dt=b.t-a.t;if(dt<=0)return null;
+    return[(b.x-a.x)*W/dt,(b.y-a.y)*H/dt]};
+  // 1. chain pieces: B follows A when it starts shortly after A ends, close to where A was heading
+  const used=new Set(),flights=[];
+  for(let i=0;i<T.length;i++){if(used.has(i))continue;used.add(i);let path=T[i].slice();const joins=[];
+    for(;;){const e=path[path.length-1],ve=vel(path,path.length-1,-1)||[0,0],sp=Math.hypot(ve[0],ve[1]);let bj=-1,bd=Infinity;
+      for(let j=0;j<T.length;j++){if(used.has(j))continue;const s=T[j][0],gap=s.t-e.t;if(gap<=0||gap>0.25)continue;
+        const d=Math.hypot((s.x-e.x)*W,(s.y-e.y)*H),lim=Math.max(0.05*H,sp*gap*1.6+0.02*H);if(d<lim&&d<bd){bd=d;bj=j}}
+      if(bj<0)break;used.add(bj);joins.push(path.length);path=path.concat(T[bj])}
+    flights.push({path,joins})}
+  // 2. events: direction changes inside a flight, and every join
+  const isHit=(p)=>{const bx=boxesAt?boxesAt(p.t):[];return bx.some(b=>{const mw=(b.x1-b.x0)*0.25,mh=(b.y1-b.y0)*0.1;return p.x>b.x0-mw&&p.x<b.x1+mw&&p.y>b.y0-mh*2&&p.y<b.y1-(b.y1-b.y0)*0.2})};
+  const bounces=[],hits=[];
+  for(const f of flights){const p=f.path;
+    for(let i=1;i<p.length-1;i++){const vi=vel(p,i,-1),vo=vel(p,i,1);if(!vi||!vo)continue;
+      const si=Math.hypot(vi[0],vi[1]),so=Math.hypot(vo[0],vo[1]);if(si<1||so<1)continue;
+      const cos=(vi[0]*vo[0]+vi[1]*vo[1])/(si*so),dvy=vo[1]-vi[1];
+      const turn=cos<Math.cos(35*Math.PI/180),dropDown=vi[1]>0&&dvy<-Math.max(0.06*H,0.35*si);
+      if(!(turn||dropDown||f.joins.includes(i)))continue;
+      const ev={t:p[i].t,x:p[i].x,y:p[i].y};
+      if(isHit(p[i])){if(turn||f.joins.includes(i))hits.push(ev)}
+      else if(dropDown)bounces.push(ev)}}
+  const dedup=L=>{L.sort((a,b)=>a.t-b.t);const o=[];for(const e of L)if(!o.length||e.t-o[o.length-1].t>0.2)o.push(e);return o};
+  return{flights:flights.map(f=>f.path),bounces:dedup(bounces),hits:dedup(hits)};
+}
+if(typeof module!=='undefined')module.exports={ballPrep,blobsFrom,linkTracks,BALLP,ballSpace,ballEvents};
