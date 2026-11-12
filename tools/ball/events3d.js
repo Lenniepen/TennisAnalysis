@@ -7,7 +7,7 @@ const boxesAt=t=>{let b=[],bd=1;for(const f of dbg.frames){const d=Math.abs(f.t-
 const r=rally3d(b3Points(dbg.tracks.map(t=>t.pts)),boxesAt,cam,{hints:(dbg.bounces||[]).concat(dbg.hits||[]).map(e=>e.t)});
 const inS=(X,Y)=>Math.abs(X)<=4.115+0.03&&Y>=-0.03&&Y<=23.77+0.03;
 const out={bounces:r.bounces.map(b=>({t:b.t,x:b.x,y:b.y,X:b.X,Y:b.Y,pred:!!b.pred,call:inS(b.X,b.Y)?'in':'uit'})),
-  hits:r.hits.map(h=>({t:h.t,x:h.x,y:h.y,kmh:h.kmh==null?null:Math.round(h.kmh),z:h.Z})),curves:r.curves,serve:r.serve,judge:serveJudge(r.serve,1.85),
+  hits:r.hits.map(h=>({t:h.t,x:h.x,y:h.y,kmh:h.kmh==null?null:Math.round(h.kmh),avg:h.kmhAvg==null?null:Math.round(h.kmhAvg),k3:Math.round(h.kmh3d),shot:h.kmhShot==null?null:Math.round(h.kmhShot),half:h.half,z:h.Z})),curves:r.curves,serve:r.serve,judge:serveJudge(r.serve,1.85),
   pts:b3Points(dbg.tracks.map(t=>t.pts))};
 // first, simple stroke type: serve = the first hit; volley = no bounce since the previous hit; smash = contact above 2.3 m;
 // otherwise forehand/backhand from the side of the body where the ball is hit (person box nearest to the ball).
@@ -31,5 +31,5 @@ out.hits.forEach((h,i)=>{const src=r.hits[i],near=src.half==='dichtbij';
 fs.writeFileSync(process.argv[4],JSON.stringify(out));
 console.log('slagtypes',out.hits.map(h=>h.t.toFixed(2)+':'+h.type).join(' '));
 console.log('stuiten',out.bounces.map(b=>b.t.toFixed(2)+(b.pred?'v':'')+'/'+b.call).join(' '));
-console.log('slagen',out.hits.map(h=>h.t.toFixed(2)+':'+h.kmh+'km/u,'+h.z.toFixed(1)+'m').join(' '));
+console.log('slagen',out.hits.map(h=>h.t.toFixed(2)+'('+h.half+'):'+h.kmh+' [3d '+h.k3+' shot '+h.shot+' gem '+h.avg+'] '+h.z.toFixed(1)+'m').join(' '));
 if(r.serve)console.log('service',r.serve.kmh.toFixed(0),'km/u, raakpunt',r.serve.contact[2].toFixed(2),'m, net',r.serve.net&&r.serve.net.clear.toFixed(2));
