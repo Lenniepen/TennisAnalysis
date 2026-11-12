@@ -253,6 +253,7 @@ details.info{margin-top:10px}details.info summary{cursor:pointer;color:var(--mut
     <canvas id="courtMap" style="width:100%;margin-top:8px;border-radius:8px;display:block"></canvas>
     <div id="ballTable"></div>
     <div id="serveBox"></div>
+    <div id="splitBox"></div>
     <button class="btn" id="bCourtPng" style="width:100%;margin-top:8px">Stuitpunten (png)</button>
     <button class="btn" id="b3d" style="width:100%;margin-top:8px" title="De balbanen van het gekozen punt in 3D: zelf draaien en zoomen, loopt mee met de video">Bekijk in 3D</button>
     <details class="info"><summary>Uitleg</summary><div class="note">Vindt de bal met een AI-model: WASB (HRNet), getraind op tennis door NTT Communications (MIT-licentie, zie ball_model_LICENSE.md), uitgevoerd in je eigen browser met onnxruntime-web (Microsoft, MIT); er gaat niets naar een server. De oude methode (keuze “Beweging”) zoekt de bal via beweging en vorm. Daarna: banen in 3D met zwaartekracht, luchtweerstand en spin, stuiten en slagen volgens de tennisregels, en met de kalibratie omgerekend naar de baan. Snelheid = gemiddelde van raken tot stuit (lager dan de topsnelheid). De kalibratie wordt ook gebruikt voor de service-metingen in meters. Werkt het best met een vaste camera en 60 fps of meer. Experimenteel.</div></details>
@@ -1389,7 +1390,7 @@ function renderAna(){
     h+='<tr class="avg"><td>gem. '+LABELS[k].name.slice(0,2)+' ('+g.length+')</td><td></td>'+COLS.map(col=>{const x=avgOf(g,col[3]);return'<td>'+(col[4]?col[4](x):r0(x)+(col[2]({[col[3]]:0}).includes('%')?'%':'°'))+'</td>'}).join('')+'</tr>'}
   el.innerHTML=h+'</table></div><div class="note">* = raakmoment handmatig gezet · <span style="color:#fde047">•</span> = automatisch bepaald met de bal. Beweeg over een kolomkop voor uitleg. Draai/scheiding zijn ruwe schattingen uit de schijnbare breedte van schouders en heupen.</div>';
 }
-window.__renderAna=renderAna;window.__renderPick=renderPick;
+window.__renderAna=renderAna;window.__renderPick=renderPick;window.__pose={loadPose,scanFrames,detectFor};// debug/test hook (tools/ball/e2e_pose.js)
 $('#anaTable').addEventListener('click',e=>{const tr=e.target.closest('tr.row');if(!tr)return;const c=getClip(tr.dataset.id);if(!c)return;state.sel=c.id;v.pause();seekTo(c.ana.tc);render()});
 
 /* analysis sheet (png) */
@@ -2321,6 +2322,44 @@ function rallySegments(tracks,opt){const P={...RALLYP,...(opt||{})};
     else{close();cur={t0:f.t0,t1:f.t1,n:1,shots:1,dir:f.dir}}}
   close();return out}
 /*RALLY-END*/
+/*SPLIT-BEGIN*/
+// ---- split-step timing ----
+// For every hit of the opponent: when does the near player land his split-step, relative to that contact?
+// A split-step = both feet move at the same time (small hop, landing on two feet, often spreading them), then both stand
+// still for a moment. Walking/running moves one foot at a time, so it does not count. Foot = mean of ankle and toe,
+// motion per frame in torso lengths (independent of distance to the camera).
+// Rule of thumb: land ~0.15-0.25 s after the opponent's contact (2minuteTennis: 0.2 s; Aviles et al.: take-off -0.04 s,
+// landing +0.16 s; Uzu et al. 2009: best landing ~0.18 s after the signal).
+// frames: [{t,P}] with P = 33 MediaPipe landmarks {x,y,v} in 0..1; W,H = video size; hits: opponent contact times.
+const SS={MOVE:0.06,STILL:0.075,MINF:2,MINSC:0.25,GAP:0.13,W0:-0.35,W1:0.6,NORM:[0.12,0.28]};
+function ssMotion(frames,W,H){
+  const ok=(P,...i)=>i.every(k=>P[k]&&(P[k].v==null||P[k].v>=0.4));
+  const F=frames.filter(f=>f.P&&ok(f.P,11,12,23,24,27,28)),out=[];
+  // the times are seek times (jittery); the real frame step is the median step
+  const st=F.slice(1).map((f,i)=>f.t-F[i].t).filter(d=>d>0.005).sort((a,b)=>a-b),k=st.length?0.04/st[st.length>>1]:1;
+  const foot=(P,a,b)=>ok(P,b)?[(P[a].x+P[b].x)/2*W,(P[a].y+P[b].y)/2*H]:[P[a].x*W,P[a].y*H];
+  for(let i=1;i<F.length;i++){const P=F[i].P,Q=F[i-1].P,dt=F[i].t-F[i-1].t;if(dt>0.1)continue;
+    const tor=Math.hypot((P[11].x+P[12].x-P[23].x-P[24].x)/2*W,(P[11].y+P[12].y-P[23].y-P[24].y)/2*H);if(!tor)continue;
+    // motion per frame scaled to 25 fps (k), so 50/60 fps give the same numbers
+    const L=foot(P,27,31),L0=foot(Q,27,31),R=foot(P,28,32),R0=foot(Q,28,32);
+    const dl=Math.hypot(L[0]-L0[0],L[1]-L0[1])/tor*k,dr=Math.hypot(R[0]-R0[0],R[1]-R0[1])/tor*k;
+    out.push({t:F[i].t,t0:F[i-1].t,m:Math.min(dl,dr),M:Math.max(dl,dr)})}
+  return out}
+function splitSteps(frames,W,H,hits){
+  const S=ssMotion(frames,W,H),cands=[];
+  // phases where both feet move, followed (within GAP) by a frame where both are still
+  for(let i=0;i<S.length;){if(S[i].m<SS.MOVE){i++;continue}
+    let j=i;while(j+1<S.length&&S[j+1].m>=SS.MOVE&&S[j+1].t-S[j].t<0.1)j++;
+    const n=j-i+1;let still=-1;for(let q=j+1;q<S.length&&S[q].t-S[j].t<=SS.GAP;q++)if(S[q].M<=SS.STILL){still=q;break}
+    if(n>=SS.MINF&&still>=0){let sc=0;for(let q=i;q<=j;q++)sc+=S[q].m;if(sc>=SS.MINSC)cands.push({off:S[i].t0,land:(S[still].t0+S[still].t)/2,score:sc})}
+    i=j+1}
+  return hits.map(th=>{
+    const near=S.filter(s=>s.t>th-0.6&&s.t<th+0.7);if(near.length<10)return{t:th,ok:false,why:'speler niet goed in beeld'};
+    const c=cands.filter(c=>c.land>=th+SS.W0&&c.land<=th+SS.W1).sort((a,b)=>b.score-a.score)[0];
+    if(!c)return{t:th,ok:false,why:'geen split-step gezien'};
+    const dl=c.land-th,adv=dl<SS.NORM[0]?'te vroeg: je landt voordat je de richting kunt zien; spring iets later in':dl>SS.NORM[1]?'te laat: spring eerder in, zodat je landt zodra de bal vertrekt':'goed getimed';
+    return{t:th,ok:true,off:+(c.off-th).toFixed(2),land:+dl.toFixed(2),score:+c.score.toFixed(2),advice:adv}})}
+/*SPLIT-END*/
 // a real ball moves fast and smoothly; feet and noise wiggle
 function trackSpeed(t){const W=v.videoWidth,H=v.videoHeight;let d=0;for(let i=1;i<t.pts.length;i++)d+=Math.hypot((t.pts[i].x-t.pts[i-1].x)*W,(t.pts[i].y-t.pts[i-1].y)*H);return d/Math.max(1e-3,t.pts[t.pts.length-1].t-t.pts[0].t)/H}
 function trackStraight(t){const W=v.videoWidth,H=v.videoHeight,p=t.pts;let path=0;for(let i=1;i<p.length;i++)path+=Math.hypot((p[i].x-p[i-1].x)*W,(p[i].y-p[i-1].y)*H);
@@ -2449,6 +2488,18 @@ async function analyzeBall(c,prog){
       res.bounces=r3.bounces.filter(b=>fin(b.x)&&fin(b.y)).map(b=>{const o=classifyBounce({t:+b.t.toFixed(3),x:+b.x.toFixed(4),y:+b.y.toFixed(4),kmh:Math.round(b.kmh)},dt);if(b.pred)o.pred=true;return o});
       res.hits=r3.hits.filter(h=>fin(h.x)&&fin(h.y)).map(h=>({t:+h.t.toFixed(3),x:+h.x.toFixed(4),y:+h.y.toFixed(4),half:h.half,kmh:h.kmh==null?null:Math.round(h.kmh),X:+h.X.toFixed(2),Y:+h.Y.toFixed(2),z:+h.Z.toFixed(2)}))}
     if(window.__ballDbg)Object.assign(window.__ballDbg,{fast,ev,r3:r3&&{events:r3.events,flights:r3.flights,serve:r3.serve}});
+    // split-step timing (tools/ball/splitstep.js): your feet around every hit of the opponent (far half)
+    if(rally&&POSE.lmImg&&chs&&chs.toCourt){const opp=res.hits.filter(h=>h.half==='ver').map(h=>h.t);
+      if(opp.length){const fr=[];
+        for(const th of opp){if(state.cancel)return false;
+          const a=Math.max(0,th-0.7),b=Math.min(v.duration,th+0.8);
+          // the near player: biggest person standing on the near half of this court
+          let best=null;for(const bx of boxesAt(a)){const P=applyH(chs.toCourt,(bx.x0+bx.x1)/2*W,bx.y1*H);
+            if(!P||!fin(P[0])||Math.abs(P[0])>8||P[1]<-8||P[1]>CRT.NET)continue;if(!best||bx.y1-bx.y0>best.y1-best.y0)best=bx}
+          if(!best)continue;
+          const part=await scanFrames(null,Math.max(a,fr.length?fr[fr.length-1].t+0.005:0),b,null,{x:(best.x0+best.x1)/2,y:best.y0+(best.y1-best.y0)*0.55,h:best.y1-best.y0});
+          if(!part)return false;fr.push(...part)}
+        res.split=splitSteps(fr,W,H,opp).map(s=>({...s,t:+s.t.toFixed(3)}))}}
   }else{
     const path=pickBallTrack(tracks,tc);
     if(path){res.tracks=[enc(path)];const b=findBounces(path,tc+0.15)[0];
@@ -2531,7 +2582,7 @@ function renderBall(){
   const list=visibleClips().filter(c=>c.ball);
   $('#bCourtPng').disabled=!list.some(c=>ballBounces(c.ball).some(b=>fin(b.X)));
   $('#b3d').disabled=!list.some(c=>c.ball.c3&&c.ball.c3.length);
-  renderServe(list);
+  renderServe(list);renderSplit(list);
   drawCourtMap($('#courtMap'),list,false);
   if(!list.length){el.innerHTML='';return}
   let h='<div style="overflow:auto;max-height:30vh"><table class="ana"><tr><th>Clip</th><th title="Gemiddelde snelheid van raken tot stuit">km/u</th><th title="Afstand van het stuitpunt tot de achterlijn">Diepte</th><th>Kant</th><th title="In of uit (enkelspel)">In/uit</th><th title="Aantal beelden waarin de bal gevolgd is">Baan</th></tr>';
@@ -2562,6 +2613,20 @@ function renderServe(list){const el=$('#serveBox');if(!el)return;
     html+='<div class="note" style="margin-top:6px">Gemiddeld: '+Math.round(av(J.map(x=>x.s.kmh)))+' km/u · raakpunt '+dm(av(J.map(x=>x.s.contact[2])))+' m'+(nets.length?' · net +'+Math.round(av(nets)*100)+' cm':'')+(ins.length?' · '+ins.filter(x=>x.j.call==='in').length+' van '+ins.length+' in':'')+'</div>'}
   el.innerHTML=html+'<div class="note" style="margin-top:6px">Gemeten in 3D uit de baankalibratie. Raakpunt: uit de laatste plek van de opgooi in beeld en de stand van je voeten (±0,1–0,2 m). Landing aan de overkant: ±0,3 m.</div></div>';
   const inp=el.querySelector('#svH');inp.onchange=()=>{try{localStorage.setItem('tcp:height',inp.value)}catch(e){}renderBall()}}
+// split-step: landing relative to the opponent's contact, per rally; norm 0.12-0.28 s (rule of thumb ~0.2 s)
+function renderSplit(list){const el=$('#splitBox');if(!el)return;
+  const R=list.filter(c=>c.ball&&c.ball.split&&c.ball.split.length);if(!R.length){el.innerHTML='';return}
+  const fs=x=>(x>0?'+':x<0?'−':'')+Math.abs(x).toFixed(2).replace('.',',')+' s',col=a=>a==='goed getimed'?'#4ade80':'#fbbf24';
+  let html='<div style="margin-top:12px;border-top:1px solid #30363d;padding-top:8px"><b>Split-step</b> <span class="note">· landing t.o.v. het raken door de tegenstander (richtlijn ca. +0,2 s, goed: +0,12 tot +0,28 s)</span>';
+  const all=[];
+  for(const c of R){const L=LABELS[c.label];
+    html+='<div style="margin-top:8px;padding:8px;border:1px solid #30363d;border-radius:8px"><div><span class="dot" style="background:'+L.color+'"></span><b>'+L.name+' '+numberOf(c)+'</b></div>';
+    for(const s of c.ball.split){if(s.ok)all.push(s.land);
+      html+='<div data-ss="'+c.id+'" data-t="'+s.t+'" style="cursor:pointer;margin-top:4px">'+fmt(s.t)+' tegenstander raakt → '+(s.ok?'landing <b style="color:'+col(s.advice)+'">'+fs(s.land)+'</b> <span class="note">(afzet '+fs(s.off)+')</span> · '+s.advice:'<span class="note">'+s.why+'</span>')+'</div>'}
+    html+='</div>'}
+  if(all.length>1)html+='<div class="note" style="margin-top:6px">Gemiddeld: landing '+fs(all.reduce((a,b)=>a+b,0)/all.length)+' ('+all.length+' split-steps)</div>';
+  el.innerHTML=html+'<div class="note" style="margin-top:6px">Gemeten uit je skelet: split-step = beide voeten bewegen tegelijk (sprongetje) en staan daarna even stil (landing). Loopstappen tellen niet. Nauwkeurigheid ±1 beeld (±0,04 s bij 25 fps; filmen op 50/60 fps is nauwkeuriger). Klik op een regel om er naartoe te gaan.</div></div>'}
+$('#splitBox').addEventListener('click',e=>{const r=e.target.closest('[data-ss]');if(!r)return;const c=getClip(r.dataset.ss);if(!c)return;state.sel=c.id;v.pause();seekTo(Math.max(0,+r.dataset.t-0.6));render()});
 $('#serveBox').addEventListener('click',e=>{const b=e.target.closest('[data-sv3]');if(!b)return;const c=getClip(b.dataset.sv3);if(!c||!c.ball.serve)return;
   state.sel=c.id;v.pause();v.currentTime=Math.max(0,c.ball.serve.t-0.7);v3Open();v3View('zij')});
 $('#ballTable').addEventListener('click',e=>{const tr=e.target.closest('tr.row');if(!tr)return;const c=getClip(tr.dataset.id);if(!c)return;state.sel=c.id;v.pause();render();

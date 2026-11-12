@@ -53,6 +53,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   if(process.env.V3){// 3D viewer screenshots
     await seekTo(+process.env.V3);await ev("document.querySelector('#b3d').click();1");await sleep(800);
     for(const vw of['schuin','camera','zij']){await ev(`document.querySelector('[data-v3=${vw}]').click();1`);await sleep(500);const sh=await send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(outDir,'v3_'+vw+'.png'),Buffer.from(sh.result.data,'base64'))}}
+  console.log('split-step:',(await ev("(document.querySelector('#splitBox')||{}).innerText||''")).replace(/\s+/g,' '));
   console.log(logs.filter(l=>/EXC|error/i.test(l)).slice(0,10).join('\n')||'geen fouten in console');
   ws.close();cp.kill();srv.close();setTimeout(()=>process.exit(0),500);
 })().catch(e=>{console.error(e);cp.kill();process.exit(1)});
