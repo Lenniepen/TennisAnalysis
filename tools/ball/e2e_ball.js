@@ -3,12 +3,12 @@
 const http=require('http'),fs=require('fs'),path=require('path'),{spawn}=require('child_process');
 const[repo,outDir,vid,T0,T1,shots='']=process.argv.slice(2);
 const MIME={'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript','.wasm':'application/wasm','.mp4':'video/mp4'};
-const srv=http.createServer((q,s)=>{const p=path.join(repo,decodeURIComponent(q.url.split('?')[0]));fs.readFile(p,(e,d)=>{if(e){s.writeHead(404);s.end();return}s.writeHead(200,{'Content-Type':MIME[path.extname(p)]||'application/octet-stream'});s.end(d)})}).listen(8766,'127.0.0.1');
+const srv=http.createServer((q,s)=>{const p=path.join(repo,decodeURIComponent(q.url.split('?')[0]));fs.readFile(p,(e,d)=>{if(e){s.writeHead(404);s.end();return}s.writeHead(200,{'Content-Type':MIME[path.extname(p)]||'application/octet-stream'});s.end(d)})}).listen(+(process.env.PORT||8766),'127.0.0.1');
 const prof=path.join(outDir,'chrome-prof-'+Date.now());
-const cp=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--remote-debugging-port=9334','--user-data-dir='+prof,'--window-size=1500,900','--autoplay-policy=no-user-gesture-required','about:blank'],{stdio:'ignore'});
+const cp=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--remote-debugging-port='+(process.env.DBG||9334)+'','--user-data-dir='+prof,'--window-size=1500,900','--autoplay-policy=no-user-gesture-required','about:blank'],{stdio:'ignore'});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 (async()=>{
-  let tabs;for(let i=0;i<50;i++){try{tabs=await (await fetch('http://127.0.0.1:9334/json')).json();if(tabs.length)break}catch(e){}await sleep(200)}
+  let tabs;for(let i=0;i<50;i++){try{tabs=await (await fetch('http://127.0.0.1:'+(process.env.DBG||9334)+'/json')).json();if(tabs.length)break}catch(e){}await sleep(200)}
   const ws=new WebSocket(tabs.find(t=>t.type==='page').webSocketDebuggerUrl);await new Promise(r=>ws.onopen=r);
   let id=0;const pend={},logs=[];ws.onmessage=m=>{const d=JSON.parse(m.data);if(d.id&&pend[d.id]){pend[d.id](d);delete pend[d.id]}
     if(d.method==='Runtime.consoleAPICalled')logs.push(d.params.type+': '+d.params.args.map(a=>a.value||a.description).join(' '));
@@ -19,7 +19,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   const seekTo=async t=>{await ev(`(async()=>{const v=document.querySelector('video');v.pause();v.currentTime=${t};await new Promise(r=>v.addEventListener('seeked',r,{once:true}));return 1})()`);await sleep(150)};
   const toast=()=>ev("(document.querySelector('#toast')||{}).textContent||''");
   await send('Runtime.enable');await send('Page.enable');await send('DOM.enable');
-  await send('Page.navigate',{url:'http://127.0.0.1:8766/index.html'});await sleep(2500);
+  await send('Page.navigate',{url:'http://127.0.0.1:'+(process.env.PORT||8766)+'/index.html'});await sleep(2500);
   await ev("try{localStorage.clear()}catch(e){};1");
   const doc=await send('DOM.getDocument');const q=await send('DOM.querySelector',{nodeId:doc.result.root.nodeId,selector:'#fileIn'});
   await send('DOM.setFileInputFiles',{nodeId:q.result.nodeId,files:[path.resolve(vid)]});

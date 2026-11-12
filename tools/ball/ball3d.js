@@ -226,7 +226,10 @@ function rally3d(pts,boxesAt,cam,opt={}){
     let typ=cur==='bounce'?(jh.cost<jb.cost-M?'hit':'bounce'):cur==='hit'?(jb.cost<jh.cost-M&&!e.serve?'bounce':'hit'):(jb.cost<=jh.cost?'bounce':'hit');
     const w=typ==='bounce'?jb:jh;e.type=typ;e.P=w.P;e.t=w.t;e.vA=w.vA;e.vB=w.vB;e.joint={b:+jb.cost.toFixed(1),h:+jh.cost.toFixed(1)}}
   const bounces=[],hits=[],predicted=[];
+  // last event so far, including hits inferred in a gap and predicted bounces (they count for the rules too)
+  let lastEv=null;
   for(let i=0;i<evs.length;i++){const e=evs[i];
+    if(e.type!=='gap')lastEv={type:e.type,Y:e.P?e.P[1]:NaN};
     if(e.type==='bounce'&&!e.pre){const ip=cam.project(e.P[0],e.P[1],0);bounces.push({t:e.t,x:ip?ip[0]/cam.W:NaN,y:ip?ip[1]/cam.H:NaN,X:e.P[0],Y:e.P[1],kmh:Math.hypot(...e.vA)*3.6,d3:true})}
     else if(e.type==='hit'){// mark it where the ball was last seen before the contact (the 3D point is extrapolated)
       const lo=segs[i].obs[segs[i].obs.length-1];hits.push({t:e.t,x:lo.x,y:lo.y,X:e.P[0],Y:e.P[1],Z:e.P[2],kmh:Math.hypot(...e.vB)*3.6,half:side(e.P[1])==='near'?'dichtbij':'ver'})}
@@ -234,17 +237,20 @@ function rally3d(pts,boxesAt,cam,opt={}){
       // ball lost around the racket, but it comes back the other way: there was a hit in the gap
       const A=segs[i],Bs=segs[i+1],a=b3At(A.fit,A.fit.t1),b=b3At(Bs.fit,Bs.fit.t0);
       if(!(Math.sign(a[4])!==Math.sign(b[4])&&Math.abs(a[4])>3&&Math.abs(b[4])>3&&Bs.fit.t0-A.fit.t1<0.8))return false;
-      const h=evCost(A,Bs,'hit'),lo=A.obs[A.obs.length-1];if(h.P[2]<0.3)return false;// not at ground level
+      // not at ground level, unless the ball just bounced on this side: then by the rules a hit comes next (on the far side
+      // the height of a short flight is too uncertain to overrule that; kunstgras 28.05)
+      const h=evCost(A,Bs,'hit'),lo=A.obs[A.obs.length-1],afterB=lastEv&&lastEv.type==='bounce'&&side(lastEv.Y)===side(h.P[1]);
+      if(h.P[2]<0.3&&!afterB)return false;
       // rules: the same side never hits twice in a row (a short, badly fitted flight after a far bounce can look like
       // the ball coming back; punt 3 at 10.40)
       const last=hits[hits.length-1];if(last&&side(last.Y)===side(h.P[1]))return false;
-      hits.push({t:h.t,x:lo.x,y:lo.y,X:h.P[0],Y:h.P[1],Z:h.P[2],kmh:Math.hypot(...h.vB)*3.6,half:side(h.P[1])==='near'?'dichtbij':'ver',inferred:true});return true})()){}
+      hits.push({t:h.t,x:lo.x,y:lo.y,X:h.P[0],Y:h.P[1],Z:Math.max(h.P[2],0.3),kmh:Math.hypot(...h.vB)*3.6,half:side(h.P[1])==='near'?'dichtbij':'ver',inferred:true});lastEv={type:'hit',Y:h.P[1]};return true})()){}
     else if(e.type==='gap'){// Hawk-Eye style: a flight that goes into a gap and would land before it ends -> predicted bounce
       // only after a hit (after a bounce the next thing is a hit, not a second bounce)
-      let prev=null;for(let j=i-1;j>=0;j--)if(evs[j].type!=='gap'){prev=evs[j];break}if(prev&&prev.type==='bounce')continue;
+      if(lastEv&&lastEv.type==='bounce')continue;
       const A=segs[i],Bs=segs[i+1];if(A.kind!=='flight')continue;const ta=A.obs[A.obs.length-1].t,tb=Bs.obs[0].t;if(tb-ta<0.12)continue;
       const ts=[];for(let t=ta;t<=tb;t+=0.01)ts.push(t);const S=b3Sim(A.fit.q,A.fit.t0,ts);const j=S.findIndex(s=>s[2]<=0);
-      if(j>0&&S[j][5]<0){const s=S[j],ip=cam.project(s[0],s[1],0);if(ip&&Math.abs(s[0])<9&&s[1]>-4&&s[1]<B3.L+5)predicted.push({t:ts[j],x:ip[0]/cam.W,y:ip[1]/cam.H,X:s[0],Y:s[1],kmh:Math.hypot(s[3],s[4],s[5])*3.6,pred:true,d3:true})}}}
+      if(j>0&&S[j][5]<0){const s=S[j],ip=cam.project(s[0],s[1],0);if(ip&&Math.abs(s[0])<9&&s[1]>-4&&s[1]<B3.L+5)predicted.push({t:ts[j],x:ip[0]/cam.W,y:ip[1]/cam.H,X:s[0],Y:s[1],kmh:Math.hypot(s[3],s[4],s[5])*3.6,pred:true,d3:true});lastEv={type:'bounce',Y:s[1]}}}}
   // speed of a hit = average over the ground from the hitter to the next bounce. Both points lie on the ground, so this is
   // reliable on the far side too (the speed of a ball in the air there is not: its depth is uncertain). No bounce before
   // the next hit (volley) or the end (ball in the net): no speed rather than a wrong one.
@@ -336,4 +342,15 @@ function serveJudge(s,h){if(!s)return null;const SV=6.40,SW=4.115,near=s.server=
 // merge track pieces into one point list (one point per frame; on overlap keep the point of the longer piece)
 function b3Points(flights){const all=[];flights.forEach(f=>{for(const p of f)all.push({t:p.t,x:p.x,y:p.y,len:f.length})});
   all.sort((a,b)=>a.t-b.t||b.len-a.len);const out=[];for(const p of all)if(!out.length||p.t-out[out.length-1].t>0.005)out.push({t:p.t,x:p.x,y:p.y});return out}
-if(typeof module!=='undefined')module.exports={B3,ballCamera,fit3d,rally3d,b3Points,b3Sim,serveJudge};
+// where a ball can show up in the image (pixels): the convex hull of the court area on the ground (2.5 m beside the doubles
+// lines, 1 m before the near baseline, 6 m behind the far one) and of the doubles court at 3 m height. A ball in the air
+// near the camera shows up outside the ground area (punt 3, 13.0-14.0: the user's hit along the right sideline was dropped).
+function ballSpace3d(cam){const P=[];
+  for(const Y of[-1,23.77+6]){for(const X of[-8,8])P.push(cam.project(X,Y,0));for(const X of[-5.5,5.5])P.push(cam.project(X,Y,3))}
+  const Q=P.filter(p=>p&&isFinite(p[0])&&isFinite(p[1])).sort((a,b)=>a[0]-b[0]||a[1]-b[1]);if(Q.length<6)return null;
+  const cr=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]),lo=[],up=[];
+  for(const p of Q){while(lo.length>=2&&cr(lo[lo.length-2],lo[lo.length-1],p)<=0)lo.pop();lo.push(p)}
+  for(const p of Q.slice().reverse()){while(up.length>=2&&cr(up[up.length-2],up[up.length-1],p)<=0)up.pop();up.push(p)}
+  const Hl=lo.slice(0,-1).concat(up.slice(0,-1));
+  return(x,y)=>{for(let i=0;i<Hl.length;i++){const a=Hl[i],b=Hl[(i+1)%Hl.length];if(cr(a,b,[x,y])<0)return false}return true}}
+if(typeof module!=='undefined')module.exports={B3,ballCamera,fit3d,rally3d,b3Points,b3Sim,serveJudge,ballSpace3d};
