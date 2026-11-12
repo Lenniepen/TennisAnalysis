@@ -1744,9 +1744,14 @@ OVERLAYS.push((ctx,w,h,dpr)=>{
     for(const tr of ballTracks(c.ball)){const pts=tr.filter(q=>q[0]<=t+1e-3&&q[0]>=t-(c.label==='punt'?1.2:9));if(!pts.length)continue;
       ctx.strokeStyle='rgba(253,224,71,.9)';ctx.lineWidth=2*dpr;ctx.beginPath();pts.forEach((q,i)=>{const X=q[1]*w,Y=q[2]*h;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke();
       const q=pts[pts.length-1];if(t-q[0]<0.15){ctx.fillStyle='#fde047';ctx.beginPath();ctx.arc(q[1]*w,q[2]*h,4*dpr,0,7);ctx.fill()}}
-    for(const b of ballBounces(c.ball)){if(b.t>t+1e-3)continue;ctx.strokeStyle=b.call==='uit'?'#f87171':b.call==='in'?'#4ade80':'#fbbf24';ctx.lineWidth=2.5*dpr;ctx.beginPath();ctx.arc(b.x*w,b.y*h,8*dpr,0,7);ctx.stroke()}
+    // 3D flights: thin white line, also through the frames where the ball was not seen
+    for(const cu of (c.ball.curves||[])){const pts=cu.filter(q=>q[0]<=t+1e-3&&q[0]>=t-1.2);if(pts.length<2)continue;
+      ctx.strokeStyle='rgba(255,255,255,.55)';ctx.lineWidth=1*dpr;ctx.beginPath();pts.forEach((q,i)=>{const X=q[1]*w,Y=q[2]*h;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke()}
+    // bounces; a predicted one (ball not seen at the bounce, computed from the flight) is dashed
+    for(const b of ballBounces(c.ball)){if(b.t>t+1e-3)continue;ctx.strokeStyle=b.call==='uit'?'#f87171':b.call==='in'?'#4ade80':'#fbbf24';ctx.lineWidth=2.5*dpr;ctx.setLineDash(b.pred?[4*dpr,3*dpr]:[]);ctx.beginPath();ctx.arc(b.x*w,b.y*h,8*dpr,0,7);ctx.stroke();ctx.setLineDash([])}
     // hits (racket contact): small white cross
-    for(const k of (c.ball.hits||[])){if(k.t>t+1e-3||t-k.t>3)continue;const X=k.x*w,Y=k.y*h,s=6*dpr;ctx.strokeStyle='#fff';ctx.lineWidth=2*dpr;ctx.beginPath();ctx.moveTo(X-s,Y-s);ctx.lineTo(X+s,Y+s);ctx.moveTo(X+s,Y-s);ctx.lineTo(X-s,Y+s);ctx.stroke()}
+    for(const k of (c.ball.hits||[])){if(k.t>t+1e-3||t-k.t>3)continue;const X=k.x*w,Y=k.y*h,s=6*dpr;ctx.strokeStyle='#fff';ctx.lineWidth=2*dpr;ctx.beginPath();ctx.moveTo(X-s,Y-s);ctx.lineTo(X+s,Y+s);ctx.moveTo(X+s,Y-s);ctx.lineTo(X-s,Y+s);ctx.stroke();
+      if(fin(k.kmh)&&t-k.t<1.2)pill(ctx,k.kmh+' km/u'+(fin(k.z)?' · '+k.z.toFixed(1).replace('.',',')+' m':''),X,Y-16*dpr,11*dpr,'#fff')}
   }
 });
 
@@ -1890,6 +1895,199 @@ function ballEvents(tracks,boxesAt,W,H,netY){
   return{flights:flights.map(f=>f.path),bounces:dedup(bounces),hits:dedup(hits)};
 }
 /*BALL-DETECT-END*/
+/*BALL-3D-BEGIN*/
+// Ball in 3D from one camera (like Hawk-Eye, but with a single camera).
+// 1. ballCamera: camera position, angle and focal length from the court calibration (homography + lens k).
+// 2. fit3d: a 3D flight per piece of track: gravity, air drag and spin (Magnus: topspin/slice pushes the ball down/up,
+//    side spin sideways). Spin is estimated per flight (no need to know the stroke type), with a mild prior.
+// 3. rally3d: splits the ball points into flights and labels every break as bounce / hit / gap, choosing the most likely
+//    sequence that follows the tennis rules (dynamic programming). A bounce = the ball reaches height 0 and goes on in the
+//    same direction; a hit = height 0.15-3.2 m, the ball turns back (the length direction reverses), near a player.
+//    Rules (ITF): hits alternate between the sides; at most one bounce between two hits (second bounce = end of the point);
+//    the return of serve must bounce first; bounces before the serve are the server bouncing the ball. In doubt: penalties,
+//    never hard stops.
+const B3={G:9.81,KD:0.0197,KM:0.0359,sig:1.5,hub:3,cap:14,spinSd:0.2,maxSeg:2.6,minPts:5,skip:12,NET:11.885,L:23.77,HW:5.485};
+// pts: the 4 calibration points (normalised), ref: their court positions in metres (default: the two baselines)
+function ballCamera(pts,k,W,H,ref){
+  k=k||0;const s=Math.hypot(W,H)/2,cx=W/2,cy=H/2;
+  const und=(x,y)=>{if(!k)return[x,y];const dx=(x-cx)/s,dy=(y-cy)/s,f=1/(1+k*(dx*dx+dy*dy));return[cx+dx*f*s,cy+dy*f*s]};
+  const dis=(x,y)=>{if(!k)return[x,y];const dx=(x-cx)/s,dy=(y-cy)/s,ru=Math.hypot(dx,dy);if(ru<1e-9)return[x,y];const D=1-4*k*ru*ru;if(D<0)return null;const f=(1-Math.sqrt(D))/(2*k*ru)/ru;return[cx+dx*f*s,cy+dy*f*s]};
+  ref=ref||[[-B3.HW,0],[B3.HW,0],[B3.HW,B3.L],[-B3.HW,B3.L]];const img=pts.map(p=>und(p.x*W,p.y*H));
+  const A=[],b=[];for(let i=0;i<4;i++){const[x,y]=ref[i],[X,Y]=img[i];A.push([x,y,1,0,0,0,-X*x,-X*y]);b.push(X);A.push([0,0,0,x,y,1,-Y*x,-Y*y]);b.push(Y)}
+  const h=b3Solve(A,b);if(!h)return null;const Hm=[...h,1];
+  const col=j=>[Hm[j]-cx*Hm[6+j],Hm[3+j]-cy*Hm[6+j],Hm[6+j]],h1=col(0),h2=col(1),h3=col(2);
+  const A1=h1[0]*h2[0]+h1[1]*h2[1],B1=-h1[2]*h2[2],A2=h1[0]**2+h1[1]**2-h2[0]**2-h2[1]**2,B2=-(h1[2]**2-h2[2]**2);
+  const u=(A1*B1+A2*B2)/(A1*A1+A2*A2);if(!(u>0))return null;const f=1/Math.sqrt(u);
+  const nrm=v=>Math.hypot(v[0],v[1],v[2]),ki=v=>[v[0]/f,v[1]/f,v[2]];
+  let r1=ki(h1),r2=ki(h2),t=ki(h3);const lam=2/(nrm(r1)+nrm(r2));r1=r1.map(x=>x*lam);r2=r2.map(x=>x*lam);t=t.map(x=>x*lam);
+  if(t[2]<0){r1=r1.map(x=>-x);r2=r2.map(x=>-x);t=t.map(x=>-x)}
+  // make r1, r2 exactly orthonormal (split the error), r3 = r1 x r2
+  {const n1=nrm(r1),n2=nrm(r2);r1=r1.map(x=>x/n1);r2=r2.map(x=>x/n2);const d=r1[0]*r2[0]+r1[1]*r2[1]+r1[2]*r2[2];
+    const a=r1.map((x,i)=>x-d/2*r2[i]),c=r2.map((x,i)=>x-d/2*r1[i]),na=nrm(a),nc=nrm(c);r1=a.map(x=>x/na);r2=c.map(x=>x/nc)}
+  const r3=[r1[1]*r2[2]-r1[2]*r2[1],r1[2]*r2[0]-r1[0]*r2[2],r1[0]*r2[1]-r1[1]*r2[0]];
+  const R=[[r1[0],r2[0],r3[0]],[r1[1],r2[1],r3[1]],[r1[2],r2[2],r3[2]]];
+  const C=[0,1,2].map(j=>-(R[0][j]*t[0]+R[1][j]*t[1]+R[2][j]*t[2]));
+  if(!(C[2]>0.3&&C[2]<40)||!(f>W*0.15&&f<W*5))return null;// camera must stand above the ground, sane focal length
+  const project=(X,Y,Z)=>{const c0=R[0][0]*X+R[0][1]*Y+R[0][2]*Z+t[0],c1=R[1][0]*X+R[1][1]*Y+R[1][2]*Z+t[1],c2=R[2][0]*X+R[2][1]*Y+R[2][2]*Z+t[2];
+    if(c2<0.2)return null;return dis(f*c0/c2+cx,f*c1/c2+cy)};
+  // viewing ray of an image point (normalised coords): world direction from C
+  const ray=(xn,yn)=>{const p=und(xn*W,yn*H),d=[(p[0]-cx)/f,(p[1]-cy)/f,1];return[0,1,2].map(j=>R[0][j]*d[0]+R[1][j]*d[1]+R[2][j]*d[2])};
+  const atHeight=(xn,yn,z)=>{const d=ray(xn,yn),s_=(z-C[2])/d[2];if(!(s_>0))return null;return[C[0]+s_*d[0],C[1]+s_*d[1],z]};
+  return{f,R,t,C,W,H,k,project,ray,atHeight,fovH:2*Math.atan(W/2/f)*180/Math.PI};
+}
+function b3Solve(A,b){const m=b.length,M=A.map((r,i)=>[...r,b[i]]);
+  for(let c=0;c<m;c++){let p=c;for(let r=c+1;r<m;r++)if(Math.abs(M[r][c])>Math.abs(M[p][c]))p=r;[M[c],M[p]]=[M[p],M[c]];
+    if(Math.abs(M[c][c])<1e-14)return null;for(let r=0;r<m;r++){if(r===c)continue;const g=M[r][c]/M[c][c];if(g)for(let q=c;q<=m;q++)M[r][q]-=g*M[c][q]}}
+  return M.map((r,i)=>r[m]/r[i])}
+// flight: state s=[x,y,z,vx,vy,vz]; spin cT (>0 topspin, <0 slice) and cS (side), in lift-coefficient units
+function b3Acc(s,cT,cS,o){const vx=s[3],vy=s[4],vz=s[5],v=Math.hypot(vx,vy,vz)||1e-9,hv=Math.hypot(vx,vy)||1e-9;
+  const sx=vy/hv,sy=-vx/hv,ux=sy*vz/v,uy=-sx*vz/v,uz=(sx*vy-sy*vx)/v,m=B3.KM*v*v,d=B3.KD*v;
+  o[0]=vx;o[1]=vy;o[2]=vz;o[3]=-d*vx+m*(-cT*ux+cS*sx);o[4]=-d*vy+m*(-cT*uy+cS*sy);o[5]=-B3.G-d*vz-m*cT*uz}
+const _k1=new Float64Array(6),_k2=new Float64Array(6),_k3=new Float64Array(6),_k4=new Float64Array(6),_tmp=new Float64Array(6);
+function b3Step(s,h,cT,cS){b3Acc(s,cT,cS,_k1);for(let i=0;i<6;i++)_tmp[i]=s[i]+h/2*_k1[i];b3Acc(_tmp,cT,cS,_k2);for(let i=0;i<6;i++)_tmp[i]=s[i]+h/2*_k2[i];
+  b3Acc(_tmp,cT,cS,_k3);for(let i=0;i<6;i++)_tmp[i]=s[i]+h*_k3[i];b3Acc(_tmp,cT,cS,_k4);for(let i=0;i<6;i++)s[i]+=h/6*(_k1[i]+2*_k2[i]+2*_k3[i]+_k4[i])}
+// states at the given times (sorted), starting from q (state at time t0) — forward and/or backward
+function b3Sim(q,t0,times){const out=new Array(times.length),cT=q[6]||0,cS=q[7]||0;
+  let s=Float64Array.from(q.slice(0,6)),tc=t0,i0=0;while(i0<times.length&&times[i0]<t0)i0++;
+  for(let i=i0;i<times.length;i++){const dt=times[i]-tc,n=Math.max(1,Math.ceil(dt/0.02));for(let j=0;j<n;j++)b3Step(s,dt/n,cT,cS);tc=times[i];out[i]=Array.from(s)}
+  s=Float64Array.from(q.slice(0,6));tc=t0;
+  for(let i=i0-1;i>=0;i--){const dt=times[i]-tc,n=Math.max(1,Math.ceil(-dt/0.02));for(let j=0;j<n;j++)b3Step(s,dt/n,cT,cS);tc=times[i];out[i]=Array.from(s)}
+  return out}
+function b3Resid(q,obs,cam,spin){const S=b3Sim(q,obs[0].t,obs.map(o=>o.t)),r=[];let cost=0;
+  for(let i=0;i<obs.length;i++){const s=S[i],p=cam.project(s[0],s[1],s[2]),o=obs[i];let ex,ey;
+    if(!p){ex=ey=200}else{ex=p[0]-o.x*cam.W;ey=p[1]-o.y*cam.H}
+    // Huber: residuals beyond hub px count linearly (a wrong candidate does not pull the flight)
+    // capped: a point far off (racket, leg, noise) costs at most `cap`, like a point that is simply thrown away
+    const a=Math.hypot(ex,ey)/B3.sig,hb=B3.hub/B3.sig,c=Math.min(B3.cap,a<=hb?a*a:hb*(2*a-hb)),w=a>1e-9?Math.sqrt(c)/a:1;
+    r.push(ex/B3.sig*w,ey/B3.sig*w);cost+=c;
+    const under=Math.max(0,-0.03-s[2])/0.05;r.push(under);cost+=under*under}// not below the ground
+  // no tennis ball flies faster than ~250 km/h
+  const v0=Math.hypot(q[3],q[4],q[5]),fast=Math.max(0,v0-65)/5;r.push(fast);cost+=fast*fast;
+  const pr=spin?[q[6]/B3.spinSd,q[7]/B3.spinSd]:[];for(const x of pr){r.push(x);cost+=x*x}
+  return{r,cost}}
+function b3LM(q,obs,cam,spin,iters){const np=spin?8:6;q=q.slice();if(q.length<8)q.push(0,0);let lam=1e-2,cur=b3Resid(q,obs,cam,spin);
+  for(let it=0;it<iters;it++){const r0=cur.r,J=[];
+    for(let j=0;j<np;j++){const e=j<3?2e-3:j<6?2e-3:1e-3,qq=q.slice();qq[j]+=e;const r=b3Resid(qq,obs,cam,spin).r;J.push(r.map((x,i)=>(x-r0[i])/e))}
+    const JtJ=[],Jtr=[];for(let a=0;a<np;a++){JtJ.push([]);let s=0;for(let i=0;i<r0.length;i++)s+=J[a][i]*r0[i];Jtr.push(-s);
+      for(let b=0;b<np;b++){let t=0;for(let i=0;i<r0.length;i++)t+=J[a][i]*J[b][i];JtJ[a].push(t)}}
+    let ok=false;
+    for(let tr=0;tr<6;tr++){const M=JtJ.map((row,a)=>row.map((x,b)=>a===b?x*(1+lam)+1e-6:x)),dq=b3Solve(M,Jtr);if(!dq)break;
+      const nq=q.slice();for(let j=0;j<np;j++)nq[j]+=dq[j];const c=b3Resid(nq,obs,cam,spin);
+      if(c.cost<cur.cost){const imp=cur.cost-c.cost;q=nq;cur=c;lam=Math.max(1e-6,lam/3);ok=true;if(imp<1e-4*cur.cost+1e-3)it=iters;break}lam*=5}
+    if(!ok)break}
+  return{q,cost:cur.cost}}
+// fit one flight on obs [{t,x,y}] (normalised image coords)
+function fit3d(obs,cam){const n=obs.length;if(n<B3.minPts)return null;
+  const a=obs[0],b=obs[n-1],T=b.t-a.t;if(T<=0)return null;let best=null;
+  for(const z1 of[0.2,1.2,2.6])for(const z2 of[0.2,1.2,2.6]){const P=cam.atHeight(a.x,a.y,z1),Q=cam.atHeight(b.x,b.y,z2);if(!P||!Q)continue;
+    if(Math.hypot(P[0]-Q[0],P[1]-Q[1])/T>70)continue;
+    const q=[...P,(Q[0]-P[0])/T,(Q[1]-P[1])/T,(Q[2]-P[2])/T+B3.G*T/2,0,0],r=b3LM(q,obs,cam,false,6);if(!best||r.cost<best.cost)best=r}
+  if(!best)return null;const r=b3LM(best.q,obs,cam,true,16);
+  return{q:r.q,t0:a.t,t1:b.t,cost:r.cost,n,rms:Math.sqrt(Math.max(0,r.cost-(r.q[6]**2+r.q[7]**2)/B3.spinSd**2)/(2*n))*B3.sig}}
+const b3At=(fit,t)=>b3Sim(fit.q,fit.t0,[t])[0];
+// ---- the rally: points -> flights + events
+// pts: [{t,x,y}] sorted (one per frame), boxesAt(t) -> person boxes (normalised), cam from ballCamera
+function rally3d(pts,boxesAt,cam,opt={}){
+  const n=pts.length;if(n<B3.minPts||!cam)return null;
+  // frame step of the ball points themselves (the analysis may sample faster than the video has new frames)
+  const sp_=pts.slice(1).map((p,i)=>p.t-pts[i].t).filter(x=>x>1e-3).sort((a,b)=>a-b),dtF=Math.max(opt.dt||0,sp_.length?sp_[Math.floor(sp_.length*0.3)]:0.04);
+  // candidate breaks: between point a and a+1, where the 2D motion changes or a gap starts
+  const v2=(i,j)=>{const p=pts[i],q=pts[j],dt=q.t-p.t||1e-3;return[(q.x-p.x)*cam.W/dt,(q.y-p.y)*cam.H/dt]};
+  const cand=new Set(),sc=new Float64Array(n);
+  for(let a=2;a<n-3;a++){const vi=v2(a-2,a),vo=v2(a+1,a+3),si=Math.hypot(...vi),so=Math.hypot(...vo);if(si<1||so<1){sc[a]=1;continue}
+    const cos=Math.max(-1,Math.min(1,(vi[0]*vo[0]+vi[1]*vo[1])/(si*so))),ang=Math.acos(cos)*180/Math.PI,ay=vo[1]-vi[1];
+    sc[a]=Math.max(ang/15,Math.abs(Math.log(so/si))/Math.log(1.4),-ay/Math.max(40,0.25*si))}
+  for(let a=0;a<n-1;a++){const gap=pts[a+1].t-pts[a].t;if(gap>1.6*dtF){cand.add(a);continue}
+    if(sc[a]>=1&&sc[a]>=Math.max(sc[a-1]||0,sc[a-2]||0,sc[a+1]||0,sc[a+2]||0))cand.add(a)}
+  for(const t of opt.hints||[]){let a=0;while(a<n-2&&pts[a+1].t<t)a++;cand.add(a);if(a>0)cand.add(a-1)}
+  const B=[-1,...[...cand].sort((a,b)=>a-b),n-1];// break p: segment = points (B[p]+1 .. B[q])
+  const m=B.length,fits=new Map();
+  const seg=(p,q)=>{const key=p*1000+q;if(fits.has(key))return fits.get(key);const i0=B[p]+1,i1=B[q],obs=pts.slice(i0,i1+1);let s;
+    if(!obs.length)s=null;
+    else{const dur=obs[obs.length-1].t-obs[0].t,junk={kind:'junk',cost:B3.cap*obs.length+12,obs,i0,i1};// dearer than absorbing the points in a flight
+      if(obs.length>=B3.minPts&&dur<=B3.maxSeg){const f=fit3d(obs,cam);s=f?{kind:'flight',fit:f,cost:f.cost+20,obs,i0,i1}:junk}
+      else s=obs.length<B3.minPts?junk:null}
+    fits.set(key,s);return s};
+  const side=Y=>Y<B3.NET?'near':'far';
+  // event between flight A (ends) and flight B (starts)
+  const evCost=(A,Bf,type)=>{
+    const ta=A.obs[A.obs.length-1].t,tb=Bf.obs[0].t;
+    if(type==='gap')return{cost:tb-ta>0.25?4:14,t:(ta+tb)/2};
+    // meeting time: bounce = A reaches the ground, hit = where A and B are closest
+    const N=8,ts=[];for(let i=0;i<=N;i++)ts.push(ta-0.02+(tb-ta+0.04)*i/N);
+    const SA=b3Sim(A.fit.q,A.fit.t0,ts),SB=b3Sim(Bf.fit.q,Bf.fit.t0,ts);let bi=0,bd=Infinity;
+    for(let i=0;i<=N;i++){const d=type==='bounce'?Math.abs(SA[i][2])+Math.abs(SB[i][2])+0.3*Math.hypot(SA[i][0]-SB[i][0],SA[i][1]-SB[i][1]):Math.hypot(SA[i][0]-SB[i][0],SA[i][1]-SB[i][1],SA[i][2]-SB[i][2]);if(d<bd){bd=d;bi=i}}
+    const PA=SA[bi],PB=SB[bi],t=ts[bi],dist=Math.hypot(PA[0]-cam.C[0],PA[1]-cam.C[1],PA[2]-cam.C[2]);
+    const sp=0.3+0.04*dist,sz=0.15+0.02*dist,gapPen=Math.min(30,((PA[0]-PB[0])**2+(PA[1]-PB[1])**2+(PA[2]-PB[2])**2)/sp/sp);
+    let c=gapPen;const vA=PA.slice(3),vB=PB.slice(3);
+    if(type==='bounce'){c+=Math.min(30,(PA[2]/sz)**2)+Math.min(30,(PB[2]/sz)**2);if(vA[2]>0)c+=20;if(vB[2]<0)c+=20;
+      if(Math.sign(vA[1])!==Math.sign(vB[1])&&Math.abs(vA[1])>2&&Math.abs(vB[1])>2)c+=40;
+      // a bounce costs speed: horizontally the ball keeps roughly 50-95% (topspin keeps more, slice less)
+      const hA=Math.hypot(vA[0],vA[1]),hB=Math.hypot(vB[0],vB[1]);c+=Math.min(30,(Math.max(0,hB-0.95*hA)+Math.max(0,0.45*hA-hB))**2/(0.1*hA+1)**2)}
+    else{const z=(PA[2]+PB[2])/2;if(z<0.15)c+=Math.min(40,((0.15-z)/sz)**2)+(z<0.1?10:0);// a hit at ground level is rareif(z>3.2)c+=Math.min(40,((z-3.2)/sz)**2);
+      const flip=Math.sign(vA[1])!==Math.sign(vB[1]);if(!flip&&Math.abs(vA[1])>3)c+=40;
+      // the hitter stands where the ball is: a near player hits a ball that was coming towards him (vA.y<0)
+      const Y=(PA[1]+PB[1])/2;if(Math.abs(vA[1])>3&&((Y<B3.NET-2&&vA[1]>0)||(Y>B3.NET+2&&vA[1]<0)))c+=40;
+      const ip=cam.project(PA[0],PA[1],PA[2]);
+      const pers=ip&&(boxesAt?boxesAt(t):[]).some(b=>{const w=b.x1-b.x0,h=b.y1-b.y0,x=ip[0]/cam.W,y=ip[1]/cam.H;return x>b.x0-w*0.5&&x<b.x1+w*0.5&&y>b.y0-h*0.3&&y<b.y1});
+      if(!pers)c+=6}
+    return{cost:c,t,P:type==='bounce'?[(PA[0]+PB[0])/2,(PA[1]+PB[1])/2,0]:PA.slice(0,3).map((x,i)=>(x+PB[i])/2),vA,vB}};
+  // rule state: phase 0 = before the serve, 1 = serve in the air (return must bounce), 2 = rally; nb = bounces since the last hit;
+  // hs = side of the last hitter (0 unknown, 1 near, 2 far)
+  const rule=(st,type,ev)=>{let[ph,nb,hs]=st,c=0;
+    if(type==='gap')return{c:0,st:[ph===0&&ev.dirSide?1:ph,0,ev.dirSide||0]};// a fast ball after a gap: the serve was not seen
+    if(type==='bounce'){if(ph===0)return{c:0,st:st,pre:true};const s=side(ev.P[1])==='near'?1:2;if(hs&&s===hs)c+=12;// did not cross the net
+      if(nb>=1)c+=6;// second bounce: end of the point
+      return{c,st:[ph,Math.min(2,nb+1),hs]}}
+    const s=side(ev.P[1])==='near'?1:2;
+    if(hs&&s===hs)c+=40;if(nb>=2)c+=30;if(ph===1&&nb===0)c+=25;
+    return{c,st:[ph===0?1:2,0,s]}};
+  // DP over (last segment p->q, rule state)
+  const key=(p,q,st)=>p+','+q+','+st.join('');const best=new Map();
+  const push=(p,q,st,cost,back)=>{const k=key(p,q,st),o=best.get(k);if(!o||cost<o.cost)best.set(k,{p,q,st,cost,back})};
+  // start: a fast first flight means the serve already happened (direction tells who hit it)
+  for(let q=1;q<m&&q<=B3.skip;q++){const s=seg(0,q);if(!s)continue;let st=[0,0,0];
+    if(s.kind==='flight'){const s0=b3At(s.fit,s.fit.t0);if(Math.abs(s0[4])>8)st=[1,0,s0[4]>0?1:2]}push(0,q,st,s.cost,null)}
+  for(let q=1;q<m-1;q++){
+    const here=[...best.values()].filter(e=>e.q===q);if(!here.length)continue;
+    for(const e of here){const A=seg(e.p,q);
+      for(let r=q+1;r<m&&r<=q+B3.skip;r++){const Bs=seg(q,r);if(!Bs)continue;
+        const types=A.kind==='flight'&&Bs.kind==='flight'?['bounce','hit','gap']:['gap'];
+        for(const ty of types){let ev;
+          // "gap" = the flight goes on unseen (or an event hides in it): cheap only when the ball was really lost for a while
+          if(ty==='gap'){const g=Bs.obs[0].t-A.obs[A.obs.length-1].t;ev={cost:g>0.25?4:A.kind==='flight'&&Bs.kind==='flight'?25:3,t:Bs.obs[0].t};
+            if(Bs.kind==='flight'){const s0=b3At(Bs.fit,Bs.obs[0].t);ev.dirSide=Math.abs(s0[4])>3?(s0[4]>0?1:2):0}}
+          else ev=evCost(A,Bs,ty);
+          const rr=rule(e.st,ty,ev);push(q,r,rr.st,e.cost+Bs.cost+ev.cost+rr.c,{e,ty,ev,pre:rr.pre})}}}}
+  let fin=null;for(const e of best.values())if(e.q===m-1&&(!fin||e.cost<fin.cost))fin=e;
+  if(!fin)return null;
+  // back-track
+  const chain=[];for(let e=fin;e;e=e.back&&e.back.e){chain.unshift(e)}
+  const segs=chain.map(e=>seg(e.p,e.q)),evs=[];for(let i=1;i<chain.length;i++){const b=chain[i].back;evs.push({type:b.ty,...b.ev,pre:b.pre})}
+  const bounces=[],hits=[],predicted=[];
+  for(let i=0;i<evs.length;i++){const e=evs[i];
+    if(e.type==='bounce'&&!e.pre){const ip=cam.project(e.P[0],e.P[1],0);bounces.push({t:e.t,x:ip?ip[0]/cam.W:NaN,y:ip?ip[1]/cam.H:NaN,X:e.P[0],Y:e.P[1],kmh:Math.hypot(...e.vA)*3.6,d3:true})}
+    else if(e.type==='hit'){// mark it where the ball was last seen before the contact (the 3D point is extrapolated)
+      const lo=segs[i].obs[segs[i].obs.length-1];hits.push({t:e.t,x:lo.x,y:lo.y,X:e.P[0],Y:e.P[1],Z:e.P[2],kmh:Math.hypot(...e.vB)*3.6,half:side(e.P[1])==='near'?'dichtbij':'ver'})}
+    else if(e.type==='gap'){// Hawk-Eye style: a flight that goes into a gap and would land before it ends -> predicted bounce
+      // only after a hit (after a bounce the next thing is a hit, not a second bounce)
+      let prev=null;for(let j=i-1;j>=0;j--)if(evs[j].type!=='gap'){prev=evs[j];break}if(prev&&prev.type==='bounce')continue;
+      const A=segs[i],Bs=segs[i+1];if(A.kind!=='flight')continue;const ta=A.obs[A.obs.length-1].t,tb=Bs.obs[0].t;if(tb-ta<0.12)continue;
+      const ts=[];for(let t=ta;t<=tb;t+=0.01)ts.push(t);const S=b3Sim(A.fit.q,A.fit.t0,ts);const j=S.findIndex(s=>s[2]<=0);
+      if(j>0&&S[j][5]<0){const s=S[j],ip=cam.project(s[0],s[1],0);if(ip&&Math.abs(s[0])<9&&s[1]>-4&&s[1]<B3.L+5)predicted.push({t:ts[j],x:ip[0]/cam.W,y:ip[1]/cam.H,X:s[0],Y:s[1],kmh:Math.hypot(s[3],s[4],s[5])*3.6,pred:true,d3:true})}}}
+  // fitted curves (for drawing, also through gaps of a flight)
+  const curves=segs.filter(s=>s.kind==='flight').map(s=>{const ts=[];for(let t=s.fit.t0;t<=s.fit.t1+1e-6;t+=0.02)ts.push(t);
+    return b3Sim(s.fit.q,s.fit.t0,ts).map((st,i)=>{const p=cam.project(st[0],st[1],st[2]);return p?[+ts[i].toFixed(3),+(p[0]/cam.W).toFixed(4),+(p[1]/cam.H).toFixed(4)]:null}).filter(Boolean)});
+  const flights=segs.filter(s=>s.kind==='flight').map(s=>({t0:s.fit.t0,t1:s.fit.t1,rms:s.fit.rms,spinT:s.fit.q[6],spinS:s.fit.q[7],n:s.fit.n}));
+  const diag=(t)=>{// debug: costs of the alternatives at the break nearest to time t in the chosen chain
+    let bi=-1,bd=1;for(let i=0;i+1<segs.length;i++){const d=Math.abs(segs[i].obs[segs[i].obs.length-1].t-t);if(d<bd){bd=d;bi=i}}if(bi<0)return null;
+    const A=segs[bi],Bs=segs[bi+1];if(A.kind!=='flight'||Bs.kind!=='flight')return{kinds:A.kind+'/'+Bs.kind,t:A.obs[A.obs.length-1].t};
+    const o={t:A.obs[A.obs.length-1].t};for(const ty of['bounce','hit']){const e=evCost(A,Bs,ty);o[ty]=+e.cost.toFixed(1);o[ty+'P']=e.P.map(x=>+x.toFixed(2));o[ty+'vA']=e.vA.map(x=>+x.toFixed(1));o[ty+'vB']=e.vB.map(x=>+x.toFixed(1))}return o};
+  return{diag,bounces:bounces.concat(predicted).sort((a,b)=>a.t-b.t),hits,curves,flights,events:evs.map(e=>({type:e.type,t:e.t,pre:!!e.pre,P:e.P&&e.P.map(x=>+x.toFixed(2))})),cost:fin.cost,nCand:m}}
+// merge track pieces into one point list (one point per frame; on overlap keep the point of the longer piece)
+function b3Points(flights){const all=[];flights.forEach(f=>{for(const p of f)all.push({t:p.t,x:p.x,y:p.y,len:f.length})});
+  all.sort((a,b)=>a.t-b.t||b.len-a.len);const out=[];for(const p of all)if(!out.length||p.t-out[out.length-1].t>0.005)out.push({t:p.t,x:p.x,y:p.y});return out}
+/*BALL-3D-END*/
 // a real ball moves fast and smoothly; feet and noise wiggle
 function trackSpeed(t){const W=v.videoWidth,H=v.videoHeight;let d=0;for(let i=1;i<t.pts.length;i++)d+=Math.hypot((t.pts[i].x-t.pts[i-1].x)*W,(t.pts[i].y-t.pts[i-1].y)*H);return d/Math.max(1e-3,t.pts[t.pts.length-1].t-t.pts[0].t)/H}
 function trackStraight(t){const W=v.videoWidth,H=v.videoHeight,p=t.pts;let path=0;for(let i=1;i<p.length;i++)path+=Math.hypot((p[i].x-p[i-1].x)*W,(p[i].y-p[i-1].y)*H);
@@ -1980,7 +2178,7 @@ async function analyzeBall(c,prog){
     return x=>{if(x<=P[0][0])return P[0][1];for(let i=1;i<P.length;i++)if(x<=P[i][0]){const f=(x-P[i-1][0])/(P[i][0]-P[i-1][0]);return P[i-1][1]+f*(P[i][1]-P[i-1][1])}return P[P.length-1][1]}})():null;
   if(window.__ballDbg)window.__ballDbg={r,frames,tracks};// for the test scripts (tools/ball)
   const enc=pts=>pts.map(p=>[+p.t.toFixed(3),+p.x.toFixed(4),+p.y.toFixed(4)]);
-  const res={v:5,tc,rally,tracks:[],bounces:[],hits:[],nDet:frames.reduce((a,f)=>a+f.c.length,0)};
+  const res={v:6,tc,rally,tracks:[],bounces:[],hits:[],nDet:frames.reduce((a,f)=>a+f.c.length,0)};
   if(rally){
     // physics-linked tracks are already smooth: keep anything moving, drop pieces that mostly lie on a person (legs, racket)
     const fast=tracks.filter(t=>trackStraight(t)>=0.6&&trackSpeed(t)>=0.08&&t.pts.filter(inBox).length<=t.pts.length*0.3);
@@ -1993,7 +2191,15 @@ async function analyzeBall(c,prog){
     for(let i=1;i<evs.length;i++){const p=evs[i-1],q=evs[i];if(q.kind==='b'&&p.kind==='b'&&p.half==='ver'&&q.half==='ver'&&q.t-p.t<1.6)q.kind='h'}
     res.bounces=evs.filter(e=>e.kind==='b').map(({kind,...b})=>b);
     res.hits=evs.filter(e=>e.kind==='h').map(h=>({t:+h.t.toFixed(3),x:+h.x.toFixed(4),y:+h.y.toFixed(4),half:h.half}));
-    if(window.__ballDbg)Object.assign(window.__ballDbg,{fast,ev});
+    // 3D (tools/ball/ball3d.js): camera from the calibration, flights with gravity, drag and spin, events by the tennis rules.
+    // Falls back to the 2D result above when the camera cannot be derived.
+    let r3=null;const cc=state.court;
+    try{const cam=cc&&cc.pts&&cc.pts.length===4?ballCamera(cc.pts,cc.k,W,H,courtRefPts(cc.mode)):null;
+      if(cam)r3=rally3d(b3Points(ev.flights),boxesAt,cam,{dt,hints:ev.bounces.concat(ev.hits).map(e=>e.t)})}catch(e){console.warn('3D-bal mislukt',e)}
+    if(r3){res.d3=true;res.curves=r3.curves;
+      res.bounces=r3.bounces.filter(b=>fin(b.x)&&fin(b.y)).map(b=>{const o=classifyBounce({t:+b.t.toFixed(3),x:+b.x.toFixed(4),y:+b.y.toFixed(4),kmh:Math.round(b.kmh)},dt);if(b.pred)o.pred=true;return o});
+      res.hits=r3.hits.filter(h=>fin(h.x)&&fin(h.y)).map(h=>({t:+h.t.toFixed(3),x:+h.x.toFixed(4),y:+h.y.toFixed(4),half:h.half,kmh:Math.round(h.kmh),z:+h.Z.toFixed(2)}))}
+    if(window.__ballDbg)Object.assign(window.__ballDbg,{fast,ev,r3:r3&&{events:r3.events,flights:r3.flights}});
   }else{
     const path=pickBallTrack(tracks,tc);
     if(path){res.tracks=[enc(path)];const b=findBounces(path,tc+0.15)[0];
@@ -2049,7 +2255,7 @@ function renderBall(){
   for(const c of list){const b=c.ball,L=LABELS[c.label],bs=ballBounces(b),bb=bs[0],npts=ballTracks(b).reduce((a,t)=>a+t.length,0);
     const st=b.stale?' <span style="color:#fbbf24" title="Kalibratie gewijzigd: opnieuw volgen">!</span>':'';
     if(c.label==='punt'){const last=bs[bs.length-1];
-      h+='<tr class="row'+(c.id===state.sel?' sel':'')+'" data-id="'+c.id+'"><td><span class="dot" style="background:'+L.color+'"></span>Punt '+numberOf(c)+st+'</td><td>–</td><td>–</td><td>–</td><td>'+bs.length+' stuit'+(last&&last.call?' · laatste '+last.call:'')+'</td><td>'+npts+'</td></tr>'}
+      h+='<tr class="row'+(c.id===state.sel?' sel':'')+'" data-id="'+c.id+'"><td><span class="dot" style="background:'+L.color+'"></span>Punt '+numberOf(c)+st+'</td><td>–</td><td>–</td><td>–</td><td>'+bs.length+' stuit · '+(b.hits||[]).length+' slagen'+(b.d3?' (3D)':'')+(last&&last.call?' · laatste '+last.call:'')+'</td><td>'+npts+'</td></tr>'}
     else h+='<tr class="row'+(c.id===state.sel?' sel':'')+'" data-id="'+c.id+'"><td><span class="dot" style="background:'+L.color+'"></span>'+L.name.slice(0,2)+' '+numberOf(c)+st+'</td><td>'+r0(bb&&bb.kmh)+'</td><td>'+(bb&&fin(bb.depth)?bb.depth.toFixed(1).replace('.',',')+' m':'–')+'</td><td>'+(bb&&bb.side||'–')+'</td><td>'+(bb?(bb.call||'?'):'–')+'</td><td>'+npts+'</td></tr>'}
   const sp=list.filter(c=>c.label!=='punt').map(c=>{const b=ballBounces(c.ball)[0];return b&&b.kmh}).filter(fin);
   const calls=list.filter(c=>c.label!=='punt').map(c=>{const b=ballBounces(c.ball)[0];return b&&b.call}).filter(Boolean);

@@ -1,8 +1,9 @@
-// copies court.js into index.html between the COURT-DETECT markers
-const fs=require('fs');const[src,html]=process.argv.slice(2);
+// copies a source file into index.html between /*NAME-BEGIN*/ and /*NAME-END*/ markers
+// usage: node tools/inject.js <src.js> <index.html> [NAME]   (NAME default COURT-DETECT; also BALL-DETECT, BALL-3D)
+const fs=require('fs');const[src,html,name='COURT-DETECT']=process.argv.slice(2);
 let code=fs.readFileSync(src,'utf8').replace(/^if\(typeof module.*$/m,'').trim();
 let h=fs.readFileSync(html,'utf8');
-const re=/\/\*COURT-DETECT-BEGIN\*\/[\s\S]*?\/\*COURT-DETECT-END\*\//;
-if(!re.test(h))throw new Error('markers not found');
-h=h.replace(re,()=>'/*COURT-DETECT-BEGIN*/\n'+code+'\n/*COURT-DETECT-END*/');
-fs.writeFileSync(html,h);console.log('injected',code.length,'chars');
+const re=new RegExp('/\\*'+name+'-BEGIN\\*/[\\s\\S]*?/\\*'+name+'-END\\*/');
+if(!re.test(h))throw new Error('markers not found: '+name);
+h=h.replace(re,()=>'/*'+name+'-BEGIN*/\n'+code+'\n/*'+name+'-END*/');
+fs.writeFileSync(html,h);console.log('injected',code.length,'chars into',name);
