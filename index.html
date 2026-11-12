@@ -2176,6 +2176,9 @@ function rally3d(pts,boxesAt,cam,opt={}){
       const A=segs[i],Bs=segs[i+1],a=b3At(A.fit,A.fit.t1),b=b3At(Bs.fit,Bs.fit.t0);
       if(!(Math.sign(a[4])!==Math.sign(b[4])&&Math.abs(a[4])>3&&Math.abs(b[4])>3&&Bs.fit.t0-A.fit.t1<0.8))return false;
       const h=evCost(A,Bs,'hit'),lo=A.obs[A.obs.length-1];if(h.P[2]<0.3)return false;// not at ground level
+      // rules: the same side never hits twice in a row (a short, badly fitted flight after a far bounce can look like
+      // the ball coming back; punt 3 at 10.40)
+      const last=hits[hits.length-1];if(last&&side(last.Y)===side(h.P[1]))return false;
       hits.push({t:h.t,x:lo.x,y:lo.y,X:h.P[0],Y:h.P[1],Z:h.P[2],kmh:Math.hypot(...h.vB)*3.6,half:side(h.P[1])==='near'?'dichtbij':'ver',inferred:true});return true})()){}
     else if(e.type==='gap'){// Hawk-Eye style: a flight that goes into a gap and would land before it ends -> predicted bounce
       // only after a hit (after a bounce the next thing is a hit, not a second bounce)
