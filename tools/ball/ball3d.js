@@ -254,7 +254,8 @@ function rally3d(pts,boxesAt,cam,opt={}){
     // near the camera the 3D start speed is reliable on its own (also when the far bounce was missed)
     if(h.half==='dichtbij'&&h.kmh3d>20&&h.kmh3d<200)h.kmh=h.kmh3d;if(!b)continue;
     const f=feetAt(h.t,{x:h.x,y:h.y});let P=[h.X,h.Y];if(f.length){f.sort((a,c)=>Math.hypot(a[0]-h.X,a[1]-h.Y)-Math.hypot(c[0]-h.X,c[1]-h.Y));P=[f[0][0],f[0][1]]}
-    const d=Math.hypot(b.X-P[0],b.Y-P[1]),dt=b.t-h.t;if(!(dt>0.15&&d>2))continue;
+    // a flight over the court takes at most ~2 s (a high lob); longer means a hit in between was missed
+    const d=Math.hypot(b.X-P[0],b.Y-P[1]),dt=b.t-h.t;if(!(dt>0.15&&dt<2.2&&d>2&&d/dt*3.6>15))continue;
     h.kmhAvg=d/dt*3.6;
     // TV-style speed = the speed right after contact. Near the camera the 3D fit gives it directly; on the far side the
     // depth in the air is uncertain, so it is shot back: the one start velocity (gravity + drag) that goes from the contact

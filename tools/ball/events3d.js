@@ -19,7 +19,7 @@ out.hits.forEach((h,i)=>{const src=r.hits[i],near=src.half==='dichtbij';
   const prev=evs.filter(e=>e.t<h.t-0.02).pop();
   let type;
   if(r.serve&&Math.abs(r.serve.t-h.t)<0.25)type='service';
-  else if(h.z>2.3)type='smash';
+  else if(h.z>2.3&&near)type='smash';// far side: contact height too uncertain
   else{const bx=boxesAt(h.t);let best=null,bd=1e9;for(const b of bx){const cx=(b.x0+b.x1)/2,d=Math.hypot((cx-h.x)*W,((b.y0+b.y1)/2-h.y)*H);if(d<bd){bd=d;best=b}}
     if(!best||bd>0.25*W)type='slag';
     else{const ballLeftInImage=h.x<(best.x0+best.x1)/2,playerLeft=near?ballLeftInImage:!ballLeftInImage,hand=near?HAND:'rechts';
