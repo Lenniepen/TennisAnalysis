@@ -178,14 +178,19 @@ function rally3d(pts,boxesAt,cam,opt={}){
       const ts=[];for(let t=ta;t<=tb;t+=0.01)ts.push(t);const S=b3Sim(A.fit.q,A.fit.t0,ts);const j=S.findIndex(s=>s[2]<=0);
       if(j>0&&S[j][5]<0){const s=S[j],ip=cam.project(s[0],s[1],0);if(ip&&Math.abs(s[0])<9&&s[1]>-4&&s[1]<B3.L+5)predicted.push({t:ts[j],x:ip[0]/cam.W,y:ip[1]/cam.H,X:s[0],Y:s[1],kmh:Math.hypot(s[3],s[4],s[5])*3.6,pred:true,d3:true})}}}
   // fitted curves (for drawing, also through gaps of a flight)
-  const curves=segs.filter(s=>s.kind==='flight').map(s=>{const ts=[];for(let t=s.fit.t0;t<=s.fit.t1+1e-6;t+=0.02)ts.push(t);
-    return b3Sim(s.fit.q,s.fit.t0,ts).map((st,i)=>{const p=cam.project(st[0],st[1],st[2]);return p?[+ts[i].toFixed(3),+(p[0]/cam.W).toFixed(4),+(p[1]/cam.H).toFixed(4)]:null}).filter(Boolean)});
+  // curves in the picture and in 3D ([t,X,Y,Z] in metres, for the 3D viewer); a flight is extended to its events
+  const curves=[],curves3d=[];
+  segs.forEach((s,i)=>{if(s.kind!=='flight')return;let ta=s.fit.t0,tb=s.fit.t1;
+    const eb=evs[i-1],ea=evs[i];if(eb&&eb.type!=='gap'&&eb.t<ta)ta=eb.t;if(ea&&ea.type!=='gap'&&ea.t>tb)tb=ea.t;
+    const ts=[];for(let t=ta;t<tb;t+=0.02)ts.push(t);ts.push(tb);const S=b3Sim(s.fit.q,s.fit.t0,ts);
+    curves.push(S.map((st,j)=>{const p=cam.project(st[0],st[1],st[2]);return p?[+ts[j].toFixed(3),+(p[0]/cam.W).toFixed(4),+(p[1]/cam.H).toFixed(4)]:null}).filter(Boolean));
+    curves3d.push(S.map((st,j)=>[+ts[j].toFixed(3),+st[0].toFixed(2),+st[1].toFixed(2),+Math.max(0,st[2]).toFixed(2)]))});
   const flights=segs.filter(s=>s.kind==='flight').map(s=>({t0:s.fit.t0,t1:s.fit.t1,rms:s.fit.rms,spinT:s.fit.q[6],spinS:s.fit.q[7],n:s.fit.n}));
   const diag=(t)=>{// debug: costs of the alternatives at the break nearest to time t in the chosen chain
     let bi=-1,bd=1;for(let i=0;i+1<segs.length;i++){const d=Math.abs(segs[i].obs[segs[i].obs.length-1].t-t);if(d<bd){bd=d;bi=i}}if(bi<0)return null;
     const A=segs[bi],Bs=segs[bi+1];if(A.kind!=='flight'||Bs.kind!=='flight')return{kinds:A.kind+'/'+Bs.kind,t:A.obs[A.obs.length-1].t};
     const o={t:A.obs[A.obs.length-1].t};for(const ty of['bounce','hit']){const e=evCost(A,Bs,ty);o[ty]=+e.cost.toFixed(1);o[ty+'P']=e.P.map(x=>+x.toFixed(2));o[ty+'vA']=e.vA.map(x=>+x.toFixed(1));o[ty+'vB']=e.vB.map(x=>+x.toFixed(1))}return o};
-  return{diag,bounces:bounces.concat(predicted).sort((a,b)=>a.t-b.t),hits,curves,flights,events:evs.map(e=>({type:e.type,t:e.t,pre:!!e.pre,P:e.P&&e.P.map(x=>+x.toFixed(2))})),cost:fin.cost,nCand:m}}
+  return{diag,bounces:bounces.concat(predicted).sort((a,b)=>a.t-b.t),hits,curves,curves3d,cam:cam.C.map(x=>+x.toFixed(2)),flights,events:evs.map(e=>({type:e.type,t:e.t,pre:!!e.pre,P:e.P&&e.P.map(x=>+x.toFixed(2))})),cost:fin.cost,nCand:m}}
 // merge track pieces into one point list (one point per frame; on overlap keep the point of the longer piece)
 function b3Points(flights){const all=[];flights.forEach(f=>{for(const p of f)all.push({t:p.t,x:p.x,y:p.y,len:f.length})});
   all.sort((a,b)=>a.t-b.t||b.len-a.len);const out=[];for(const p of all)if(!out.length||p.t-out[out.length-1].t>0.005)out.push({t:p.t,x:p.x,y:p.y});return out}

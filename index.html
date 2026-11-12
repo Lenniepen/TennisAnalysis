@@ -251,6 +251,7 @@ details.info{margin-top:10px}details.info summary{cursor:pointer;color:var(--mut
     <canvas id="courtMap" style="width:100%;margin-top:8px;border-radius:8px;display:block"></canvas>
     <div id="ballTable"></div>
     <button class="btn" id="bCourtPng" style="width:100%;margin-top:8px">Stuitpunten (png)</button>
+    <button class="btn" id="b3d" style="width:100%;margin-top:8px" title="De balbanen van het gekozen punt in 3D: zelf draaien en zoomen, loopt mee met de video">Bekijk in 3D</button>
     <details class="info"><summary>Uitleg</summary><div class="note">Volgt de gele bal via beweging en kleur, zoekt het stuitpunt na het raken en rekent dat met de kalibratie om naar de baan. Snelheid = gemiddelde van raken tot stuit (lager dan de topsnelheid). De kalibratie wordt ook gebruikt voor de service-metingen in meters. Werkt het best met een vaste camera en 60 fps of meer. Experimenteel.</div></details>
   </div>
 
@@ -2076,14 +2077,19 @@ function rally3d(pts,boxesAt,cam,opt={}){
       const ts=[];for(let t=ta;t<=tb;t+=0.01)ts.push(t);const S=b3Sim(A.fit.q,A.fit.t0,ts);const j=S.findIndex(s=>s[2]<=0);
       if(j>0&&S[j][5]<0){const s=S[j],ip=cam.project(s[0],s[1],0);if(ip&&Math.abs(s[0])<9&&s[1]>-4&&s[1]<B3.L+5)predicted.push({t:ts[j],x:ip[0]/cam.W,y:ip[1]/cam.H,X:s[0],Y:s[1],kmh:Math.hypot(s[3],s[4],s[5])*3.6,pred:true,d3:true})}}}
   // fitted curves (for drawing, also through gaps of a flight)
-  const curves=segs.filter(s=>s.kind==='flight').map(s=>{const ts=[];for(let t=s.fit.t0;t<=s.fit.t1+1e-6;t+=0.02)ts.push(t);
-    return b3Sim(s.fit.q,s.fit.t0,ts).map((st,i)=>{const p=cam.project(st[0],st[1],st[2]);return p?[+ts[i].toFixed(3),+(p[0]/cam.W).toFixed(4),+(p[1]/cam.H).toFixed(4)]:null}).filter(Boolean)});
+  // curves in the picture and in 3D ([t,X,Y,Z] in metres, for the 3D viewer); a flight is extended to its events
+  const curves=[],curves3d=[];
+  segs.forEach((s,i)=>{if(s.kind!=='flight')return;let ta=s.fit.t0,tb=s.fit.t1;
+    const eb=evs[i-1],ea=evs[i];if(eb&&eb.type!=='gap'&&eb.t<ta)ta=eb.t;if(ea&&ea.type!=='gap'&&ea.t>tb)tb=ea.t;
+    const ts=[];for(let t=ta;t<tb;t+=0.02)ts.push(t);ts.push(tb);const S=b3Sim(s.fit.q,s.fit.t0,ts);
+    curves.push(S.map((st,j)=>{const p=cam.project(st[0],st[1],st[2]);return p?[+ts[j].toFixed(3),+(p[0]/cam.W).toFixed(4),+(p[1]/cam.H).toFixed(4)]:null}).filter(Boolean));
+    curves3d.push(S.map((st,j)=>[+ts[j].toFixed(3),+st[0].toFixed(2),+st[1].toFixed(2),+Math.max(0,st[2]).toFixed(2)]))});
   const flights=segs.filter(s=>s.kind==='flight').map(s=>({t0:s.fit.t0,t1:s.fit.t1,rms:s.fit.rms,spinT:s.fit.q[6],spinS:s.fit.q[7],n:s.fit.n}));
   const diag=(t)=>{// debug: costs of the alternatives at the break nearest to time t in the chosen chain
     let bi=-1,bd=1;for(let i=0;i+1<segs.length;i++){const d=Math.abs(segs[i].obs[segs[i].obs.length-1].t-t);if(d<bd){bd=d;bi=i}}if(bi<0)return null;
     const A=segs[bi],Bs=segs[bi+1];if(A.kind!=='flight'||Bs.kind!=='flight')return{kinds:A.kind+'/'+Bs.kind,t:A.obs[A.obs.length-1].t};
     const o={t:A.obs[A.obs.length-1].t};for(const ty of['bounce','hit']){const e=evCost(A,Bs,ty);o[ty]=+e.cost.toFixed(1);o[ty+'P']=e.P.map(x=>+x.toFixed(2));o[ty+'vA']=e.vA.map(x=>+x.toFixed(1));o[ty+'vB']=e.vB.map(x=>+x.toFixed(1))}return o};
-  return{diag,bounces:bounces.concat(predicted).sort((a,b)=>a.t-b.t),hits,curves,flights,events:evs.map(e=>({type:e.type,t:e.t,pre:!!e.pre,P:e.P&&e.P.map(x=>+x.toFixed(2))})),cost:fin.cost,nCand:m}}
+  return{diag,bounces:bounces.concat(predicted).sort((a,b)=>a.t-b.t),hits,curves,curves3d,cam:cam.C.map(x=>+x.toFixed(2)),flights,events:evs.map(e=>({type:e.type,t:e.t,pre:!!e.pre,P:e.P&&e.P.map(x=>+x.toFixed(2))})),cost:fin.cost,nCand:m}}
 // merge track pieces into one point list (one point per frame; on overlap keep the point of the longer piece)
 function b3Points(flights){const all=[];flights.forEach(f=>{for(const p of f)all.push({t:p.t,x:p.x,y:p.y,len:f.length})});
   all.sort((a,b)=>a.t-b.t||b.len-a.len);const out=[];for(const p of all)if(!out.length||p.t-out[out.length-1].t>0.005)out.push({t:p.t,x:p.x,y:p.y});return out}
@@ -2196,9 +2202,9 @@ async function analyzeBall(c,prog){
     let r3=null;const cc=state.court;
     try{const cam=cc&&cc.pts&&cc.pts.length===4?ballCamera(cc.pts,cc.k,W,H,courtRefPts(cc.mode)):null;
       if(cam)r3=rally3d(b3Points(ev.flights),boxesAt,cam,{dt,hints:ev.bounces.concat(ev.hits).map(e=>e.t)})}catch(e){console.warn('3D-bal mislukt',e)}
-    if(r3){res.d3=true;res.curves=r3.curves;
+    if(r3){res.d3=true;res.curves=r3.curves;res.c3=r3.curves3d;res.cam=r3.cam;
       res.bounces=r3.bounces.filter(b=>fin(b.x)&&fin(b.y)).map(b=>{const o=classifyBounce({t:+b.t.toFixed(3),x:+b.x.toFixed(4),y:+b.y.toFixed(4),kmh:Math.round(b.kmh)},dt);if(b.pred)o.pred=true;return o});
-      res.hits=r3.hits.filter(h=>fin(h.x)&&fin(h.y)).map(h=>({t:+h.t.toFixed(3),x:+h.x.toFixed(4),y:+h.y.toFixed(4),half:h.half,kmh:Math.round(h.kmh),z:+h.Z.toFixed(2)}))}
+      res.hits=r3.hits.filter(h=>fin(h.x)&&fin(h.y)).map(h=>({t:+h.t.toFixed(3),x:+h.x.toFixed(4),y:+h.y.toFixed(4),half:h.half,kmh:Math.round(h.kmh),X:+h.X.toFixed(2),Y:+h.Y.toFixed(2),z:+h.Z.toFixed(2)}))}
     if(window.__ballDbg)Object.assign(window.__ballDbg,{fast,ev,r3:r3&&{events:r3.events,flights:r3.flights}});
   }else{
     const path=pickBallTrack(tracks,tc);
@@ -2249,6 +2255,7 @@ function renderBall(){
   const el=$('#ballTable');if(!el)return;renderCal();
   const list=visibleClips().filter(c=>c.ball);
   $('#bCourtPng').disabled=!list.some(c=>ballBounces(c.ball).some(b=>fin(b.X)));
+  $('#b3d').disabled=!list.some(c=>c.ball.c3&&c.ball.c3.length);
   drawCourtMap($('#courtMap'),list,false);
   if(!list.length){el.innerHTML='';return}
   let h='<div style="overflow:auto;max-height:30vh"><table class="ana"><tr><th>Clip</th><th title="Gemiddelde snelheid van raken tot stuit">km/u</th><th title="Afstand van het stuitpunt tot de achterlijn">Diepte</th><th>Kant</th><th title="In of uit (enkelspel)">In/uit</th><th title="Aantal beelden waarin de bal gevolgd is">Baan</th></tr>';
@@ -2266,6 +2273,94 @@ $('#ballTable').addEventListener('click',e=>{const tr=e.target.closest('tr.row')
   previewClip(c.label==='punt'?c:{t0:Math.max(0,c.ball.tc-0.2),t1:Math.min(v.duration,c.ball.tc+1.8)})});
 $('#bCourtPng').onclick=()=>{const cv=document.createElement('canvas');const list=visibleClips().filter(c=>c.ball);drawCourtMap(cv,list,true);cv.toBlob(b=>offerFile(b,base()+'_stuitpunten.png'),'image/png')};
 window.addEventListener('resize',()=>renderBall());
+
+// --- 3D viewer: the ball flights of a point on a 3D court. Drag = rotate, shift/right drag = move, wheel/pinch = zoom.
+// Runs along with the video: the part of the rally up to the current video time is bright, the ball itself is a dot.
+const V3={yaw:-0.45,pitch:0.42,dist:36,T:[0,CRT.NET,0.5],el:null,cv:null,raf:0,clip:null,ptr:new Map(),pinch:0};
+const V3VIEWS={schuin:[-0.45,0.42,36],boven:[0,1.45,40],zij:[-1.5708,0.12,32],achter:[0,0.22,30]};
+function v3Clip(){const c=getClip(state.sel);if(c&&c.ball&&c.ball.c3&&c.ball.c3.length)return c;return visibleClips().find(c=>c.ball&&c.ball.c3&&c.ball.c3.length)||null}
+function v3View(name){const c=V3.clip;V3.T=[0,CRT.NET,0.5];
+  if(name==='camera'&&c&&c.ball.cam){const C=c.ball.cam,T=[0,CRT.NET*0.75,0],d=Math.hypot(C[0]-T[0],C[1]-T[1],C[2]-T[2]);V3.T=T;V3.dist=d;V3.pitch=Math.asin((C[2]-T[2])/d);V3.yaw=Math.atan2(C[0]-T[0],-(C[1]-T[1]));return}
+  const p=V3VIEWS[name]||V3VIEWS.schuin;[V3.yaw,V3.pitch,V3.dist]=p}
+function v3Build(){
+  const el=document.createElement('div');el.id='v3';
+  el.style.cssText='position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;padding:12px';
+  el.innerHTML='<div style="background:#0d1117;border:1px solid #30363d;border-radius:12px;width:min(1200px,100%);height:min(780px,100%);display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="display:flex;gap:6px;align-items:center;padding:8px 10px;flex-wrap:wrap;border-bottom:1px solid #30363d"><b id="v3t" style="margin-right:auto;color:#e6edf3">3D</b>'+
+    ['camera','schuin','boven','zij','achter'].map(n=>'<button class="btn" data-v3="'+n+'">'+n[0].toUpperCase()+n.slice(1)+'</button>').join('')+
+    '<button class="btn" id="v3play" title="Afspelen/pauzeren (spatie)">▶︎/❚❚</button><button class="btn" id="v3x" title="Sluiten (Esc)">✕</button></div>'+
+    '<canvas id="v3c" style="flex:1;min-height:0;width:100%;touch-action:none;cursor:grab;display:block"></canvas>'+
+    '<div class="note" style="padding:6px 10px;border-top:1px solid #30363d">Slepen = draaien · Shift+slepen of rechtermuis = verschuiven · scrollen of knijpen = zoomen · dubbelklik = beginstand. Loopt mee met de video. Geel = bal (schaduw op de grond geeft de hoogte), wit kruis = slag met snelheid en raakhoogte, cirkel = stuit (groen in, rood uit, oranje twijfel, gestippeld = voorspeld).</div></div>';
+  document.body.appendChild(el);V3.el=el;V3.cv=el.querySelector('#v3c');
+  el.addEventListener('click',e=>{if(e.target===el)v3Close();const b=e.target.closest('[data-v3]');if(b)v3View(b.dataset.v3)});
+  el.querySelector('#v3x').onclick=v3Close;el.querySelector('#v3play').onclick=()=>{v.paused?v.play():v.pause()};
+  const cv=V3.cv;
+  cv.addEventListener('contextmenu',e=>e.preventDefault());
+  cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);V3.ptr.set(e.pointerId,{x:e.clientX,y:e.clientY,pan:e.shiftKey||e.button===2});V3.pinch=0;cv.style.cursor='grabbing'});
+  cv.addEventListener('pointermove',e=>{const p=V3.ptr.get(e.pointerId);if(!p)return;
+    if(V3.ptr.size===2){const[a,b]=[...V3.ptr.values()];const d0=Math.hypot(a.x-b.x,a.y-b.y);p.x=e.clientX;p.y=e.clientY;const d1=Math.hypot(a.x-b.x,a.y-b.y);if(d0>0)V3.dist=clamp(V3.dist*d0/d1,4,140);return}
+    const dx=e.clientX-p.x,dy=e.clientY-p.y;p.x=e.clientX;p.y=e.clientY;
+    if(p.pan){const s=V3.dist/600,cy=Math.cos(V3.yaw),sy=Math.sin(V3.yaw);V3.T[0]-=(dx*cy+dy*sy)*s;V3.T[1]-=(dx*sy-dy*cy)*s}
+    else{V3.yaw+=dx*0.008;V3.pitch=clamp(V3.pitch+dy*0.006,0.03,1.55)}});
+  const up=e=>{V3.ptr.delete(e.pointerId);cv.style.cursor='grab'};cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
+  cv.addEventListener('wheel',e=>{e.preventDefault();V3.dist=clamp(V3.dist*Math.exp(e.deltaY*0.0012),4,140)},{passive:false});
+  cv.addEventListener('dblclick',()=>v3View('schuin'));
+  document.addEventListener('keydown',e=>{if(V3.el&&V3.el.style.display!=='none'&&e.key==='Escape'){e.preventDefault();v3Close()}},true)}
+function v3Open(){const c=v3Clip();if(!c){toast('Nog geen 3D-baan: volg eerst de bal in een punt (met baankalibratie)');return}
+  if(!V3.el)v3Build();V3.clip=c;V3.el.style.display='flex';V3.el.querySelector('#v3t').textContent='3D · Punt '+numberOf(c);
+  if(v.currentTime<c.t0||v.currentTime>c.t1){v.currentTime=c.t0}
+  cancelAnimationFrame(V3.raf);const loop=()=>{v3Draw();V3.raf=requestAnimationFrame(loop)};loop()}
+function v3Close(){if(!V3.el)return;V3.el.style.display='none';cancelAnimationFrame(V3.raf)}
+function v3Draw(){
+  const cv=V3.cv,c=V3.clip,dpr=window.devicePixelRatio||1,w=Math.round(cv.clientWidth*dpr),h=Math.round(cv.clientHeight*dpr);if(!w||!h||!c)return;
+  if(cv.width!==w)cv.width=w;if(cv.height!==h)cv.height=h;const ctx=cv.getContext('2d');
+  const g=ctx.createLinearGradient(0,0,0,h);g.addColorStop(0,'#1b2433');g.addColorStop(1,'#0b0f14');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
+  // camera: eye on a sphere around the target
+  const cp=Math.cos(V3.pitch),T=V3.T,E=[T[0]+V3.dist*cp*Math.sin(V3.yaw),T[1]-V3.dist*cp*Math.cos(V3.yaw),T[2]+V3.dist*Math.sin(V3.pitch)];
+  const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],crs=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],nz=a=>{const l=Math.hypot(...a)||1;return a.map(x=>x/l)};
+  const f=nz(sub(T,E)),r=nz(crs(f,[0,0,1])),u=crs(r,f),F=Math.min(w,h)*1.1;
+  const P=(X,Y,Z)=>{const d=[X-E[0],Y-E[1],Z-E[2]],z=dot(d,f);if(z<0.2)return null;return[w/2+F*dot(d,r)/z,h/2-F*dot(d,u)/z,z]};
+  const poly=(pts,fill,stroke,lw,dash)=>{const q=pts.map(p=>P(...p));if(q.some(x=>!x))return;ctx.beginPath();q.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));
+    if(fill){ctx.closePath();ctx.fillStyle=fill;ctx.fill()}if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=lw*dpr;ctx.setLineDash(dash?dash.map(x=>x*dpr):[]);ctx.stroke();ctx.setLineDash([])}};
+  const line=(a,b,col,lw)=>{const N=8,pts=[];for(let i=0;i<=N;i++){const t=i/N;pts.push([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t])}// split: no clipping artefacts close to the eye
+    for(let i=0;i<N;i++)poly([pts[i],pts[i+1]],null,col,lw)};
+  const{L,HW,SHW,NET,SV}=CRT;
+  // ground, court, lines
+  poly([[-11,-8,0],[11,-8,0],[11,L+8,0],[-11,L+8,0]],'#183026');poly([[-HW,0,0],[HW,0,0],[HW,L,0],[-HW,L,0]],'#24543f');
+  const lc='rgba(255,255,255,.85)';
+  for(const[a,b]of[[[-HW,0],[HW,0]],[[-HW,L],[HW,L]],[[-HW,0],[-HW,L]],[[HW,0],[HW,L]],[[-SHW,0],[-SHW,L]],[[SHW,0],[SHW,L]],[[-SHW,SV],[SHW,SV]],[[-SHW,L-SV],[SHW,L-SV]],[[0,SV],[0,L-SV]],[[0,0],[0,0.15]],[[0,L],[0,L-0.15]]])line([a[0],a[1],0],[b[0],b[1],0],lc,1.3);
+  // net: posts 1.07 m at 0.914 m outside the doubles lines, 0.914 m in the middle
+  const np=HW+0.914;poly([[-np,NET,0],[np,NET,0],[np,NET,1.07],[0,NET,0.914],[-np,NET,1.07]],'rgba(230,237,243,.13)','rgba(230,237,243,.55)',1);
+  line([-np,NET,1.07],[0,NET,0.914],'#e6edf3',2);line([0,NET,0.914],[np,NET,1.07],'#e6edf3',2);
+  // the real camera
+  if(c.ball.cam){const C=c.ball.cam,q=P(...C),g0=P(C[0],C[1],0);if(q&&g0){ctx.strokeStyle='rgba(148,163,184,.6)';ctx.lineWidth=1*dpr;ctx.beginPath();ctx.moveTo(q[0],q[1]);ctx.lineTo(g0[0],g0[1]);ctx.stroke();
+    ctx.fillStyle='#94a3b8';ctx.fillRect(q[0]-5*dpr,q[1]-4*dpr,10*dpr,8*dpr);ctx.font=11*dpr+'px system-ui';ctx.fillText('camera',q[0]+8*dpr,q[1]+4*dpr)}}
+  const now=v.currentTime,b=c.ball;
+  // bounces (circle on the ground)
+  for(const s of ballBounces(b)){if(!fin(s.X)||!fin(s.Y))continue;const done=s.t<=now+1e-3,col=s.call==='uit'?'248,113,113':s.call==='in'?'74,222,128':'251,191,36';
+    const ring=[];for(let i=0;i<=20;i++){const a=i/20*Math.PI*2;ring.push([s.X+0.3*Math.cos(a),s.Y+0.3*Math.sin(a),0.005])}
+    poly(ring,done?'rgba('+col+',.35)':null,'rgba('+col+','+(done?1:.35)+')',2,s.pred?[4,3]:null)}
+  // flights: shadow on the ground (shows the height), the whole rally faint, up to "now" bright
+  for(const cu of b.c3){
+    poly(cu.map(q=>[q[1],q[2],0.01]),null,'rgba(0,0,0,.45)',2);
+    poly(cu.map(q=>[q[1],q[2],q[3]]),null,'rgba(253,224,71,.22)',1.5);
+    const done=cu.filter(q=>q[0]<=now);if(done.length>1)poly(done.map(q=>[q[1],q[2],q[3]]),null,'#fde047',2.5)}
+  // hits: white cross, line to the ground, speed and contact height
+  ctx.font=12*dpr+'px system-ui';
+  for(const k of b.hits||[]){if(!fin(k.X)||!fin(k.Y))continue;const z=fin(k.z)?Math.max(0,k.z):1,q=P(k.X,k.Y,z),g0=P(k.X,k.Y,0);if(!q)continue;const done=k.t<=now+1e-3,a=done?1:.35,s=6*dpr;
+    if(g0){ctx.strokeStyle='rgba(255,255,255,'+a*0.5+')';ctx.lineWidth=1*dpr;ctx.setLineDash([3*dpr,3*dpr]);ctx.beginPath();ctx.moveTo(q[0],q[1]);ctx.lineTo(g0[0],g0[1]);ctx.stroke();ctx.setLineDash([])}
+    ctx.strokeStyle='rgba(255,255,255,'+a+')';ctx.lineWidth=2.5*dpr;ctx.beginPath();ctx.moveTo(q[0]-s,q[1]-s);ctx.lineTo(q[0]+s,q[1]+s);ctx.moveTo(q[0]+s,q[1]-s);ctx.lineTo(q[0]-s,q[1]+s);ctx.stroke();
+    if(done&&now-k.t<2.5&&fin(k.kmh)){const tx=k.kmh+' km/u · '+(fin(k.z)?k.z.toFixed(1).replace('.',',')+' m':'');const tw=ctx.measureText(tx).width;
+      ctx.fillStyle='rgba(13,17,23,.8)';ctx.fillRect(q[0]+9*dpr,q[1]-20*dpr,tw+10*dpr,17*dpr);ctx.fillStyle='#fff';ctx.fillText(tx,q[0]+14*dpr,q[1]-7*dpr)}}
+  // the ball now
+  for(const cu of b.c3){if(now<cu[0][0]||now>cu[cu.length-1][0])continue;let i=1;while(i<cu.length-1&&cu[i][0]<now)i++;const a=cu[i-1],bq=cu[i],t=(now-a[0])/((bq[0]-a[0])||1);
+    const X=a[1]+(bq[1]-a[1])*t,Y=a[2]+(bq[2]-a[2])*t,Z=a[3]+(bq[3]-a[3])*t,q=P(X,Y,Z),g0=P(X,Y,0);if(!q)continue;
+    if(g0){ctx.fillStyle='rgba(0,0,0,.55)';ctx.beginPath();ctx.arc(g0[0],g0[1],Math.max(2.5*dpr,F*0.05/g0[2]),0,7);ctx.fill();
+      ctx.strokeStyle='rgba(253,224,71,.5)';ctx.lineWidth=1*dpr;ctx.setLineDash([2*dpr,3*dpr]);ctx.beginPath();ctx.moveTo(q[0],q[1]);ctx.lineTo(g0[0],g0[1]);ctx.stroke();ctx.setLineDash([])}
+    ctx.fillStyle='#fde047';ctx.beginPath();ctx.arc(q[0],q[1],Math.max(4*dpr,F*0.06/q[2]),0,7);ctx.fill();
+    ctx.fillStyle='#fde047';ctx.fillText(Z.toFixed(1).replace('.',',')+' m',q[0]+10*dpr,q[1]+4*dpr)}
+  ctx.fillStyle='#8b949e';ctx.font=12*dpr+'px system-ui';ctx.fillText(fmt(now),10*dpr,h-10*dpr)}
+$('#b3d').onclick=v3Open;
 
 // --- calibration fine-tuning: drag the 4 points, arrow keys for 1 px ---
 let calDrag=-1;

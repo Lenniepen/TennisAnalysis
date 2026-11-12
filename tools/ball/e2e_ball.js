@@ -43,6 +43,9 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   console.log('bal-paneel:',(await ev("(document.querySelector('[data-panel=ball]')||{}).innerText||''")).replace(/\s+/g,' ').slice(0,700));
   await ev("(()=>{const p=document.querySelector('[data-panel=ball]');const row=[...p.querySelectorAll('tr,div')].reverse().find(e=>/^\\s*Punt 1/.test(e.textContent)&&e.textContent.length<120);if(row)row.click();return !!row})()");await sleep(500);
   for(const s of shots.split(',').filter(Boolean)){await seekTo(+s);await sleep(600);const sh=await send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(outDir,'ball_'+s+'.png'),Buffer.from(sh.result.data,'base64'))}
+  if(process.env.V3){// 3D viewer screenshots
+    await seekTo(+process.env.V3);await ev("document.querySelector('#b3d').click();1");await sleep(800);
+    for(const vw of['schuin','camera','zij']){await ev(`document.querySelector('[data-v3=${vw}]').click();1`);await sleep(500);const sh=await send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(outDir,'v3_'+vw+'.png'),Buffer.from(sh.result.data,'base64'))}}
   console.log(logs.filter(l=>/EXC|error/i.test(l)).slice(0,10).join('\n')||'geen fouten in console');
   ws.close();cp.kill();srv.close();setTimeout(()=>process.exit(0),500);
 })().catch(e=>{console.error(e);cp.kill();process.exit(1)});
