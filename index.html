@@ -249,12 +249,13 @@ details.info{margin-top:10px}details.info summary{cursor:pointer;color:var(--mut
     </div>
     <div id="calInfo" class="note"></div>
     <button class="btn pri" id="bBall" style="width:100%">Bal volgen in clips</button>
+    <div class="note" style="margin-top:4px">Balherkenning <select id="ballDet" title="AI-model: getraind tennismodel (WASB), ziet ook de opgooi en de bal bij het racket; draait lokaal in de browser (5 MB, plus ca. 20 MB rekenbibliotheek de eerste keer). Beweging: de oude, snellere methode zonder model."><option value="nn">AI-model (aanbevolen)</option><option value="motion">Beweging (oud, sneller)</option></select> <span id="ballDetInfo"></span></div>
     <canvas id="courtMap" style="width:100%;margin-top:8px;border-radius:8px;display:block"></canvas>
     <div id="ballTable"></div>
     <div id="serveBox"></div>
     <button class="btn" id="bCourtPng" style="width:100%;margin-top:8px">Stuitpunten (png)</button>
     <button class="btn" id="b3d" style="width:100%;margin-top:8px" title="De balbanen van het gekozen punt in 3D: zelf draaien en zoomen, loopt mee met de video">Bekijk in 3D</button>
-    <details class="info"><summary>Uitleg</summary><div class="note">Volgt de gele bal via beweging en kleur, zoekt het stuitpunt na het raken en rekent dat met de kalibratie om naar de baan. Snelheid = gemiddelde van raken tot stuit (lager dan de topsnelheid). De kalibratie wordt ook gebruikt voor de service-metingen in meters. Werkt het best met een vaste camera en 60 fps of meer. Experimenteel.</div></details>
+    <details class="info"><summary>Uitleg</summary><div class="note">Vindt de bal met een AI-model: WASB (HRNet), getraind op tennis door NTT Communications (MIT-licentie, zie ball_model_LICENSE.md), uitgevoerd in je eigen browser met onnxruntime-web (Microsoft, MIT); er gaat niets naar een server. De oude methode (keuze “Beweging”) zoekt de bal via beweging en vorm. Daarna: banen in 3D met zwaartekracht, luchtweerstand en spin, stuiten en slagen volgens de tennisregels, en met de kalibratie omgerekend naar de baan. Snelheid = gemiddelde van raken tot stuit (lager dan de topsnelheid). De kalibratie wordt ook gebruikt voor de service-metingen in meters. Werkt het best met een vaste camera en 60 fps of meer. Experimenteel.</div></details>
   </div>
 
   <div class="panel" data-panel="export">
@@ -1900,6 +1901,43 @@ function ballEvents(tracks,boxesAt,W,H,netY){
   return{flights:flights.map(f=>f.path),bounces:dedup(bounces),hits:dedup(hits)};
 }
 /*BALL-DETECT-END*/
+/*BALL-NN-BEGIN*/
+// AI ball detector: the WASB model (HRNet, NTT Communications, MIT license) trained on tennis.
+// 3 consecutive frames in (512x288, RGB, ImageNet-normalised), one heatmap per frame out; runs in the browser with
+// onnxruntime-web (Microsoft, MIT): WebGPU when available, otherwise WASM on the processor. Nothing to install.
+// Model file: ball_model.wasm (= wasb_tennis.onnx, renamed for hosting). Converted with tools/model/export_wasb.py.
+const BNN={sess:null,loading:null,ep:'',ort:null,cv:null,ctx:null,N:512*288};
+async function ballNNLoad(){if(BNN.sess)return BNN.sess;
+  if(!BNN.loading)BNN.loading=(async()=>{
+    const u=p=>new URL(p,location.href).href,cdn='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';let ort=null;
+    // local copy first (GitHub Pages), else the CDN (hosts that cannot serve the 22 MB runtime)
+    for(const base of[u('ort/'),cdn]){try{ort=await import(base+'ort.webgpu.min.mjs');ort.env.wasm.wasmPaths=base;break}catch(e){console.warn('ort laden',base,e)}}
+    if(!ort)throw new Error('onnxruntime-web kon niet geladen worden');
+    ort.env.wasm.numThreads=1;// no cross-origin isolation on simple hosting
+    const buf=await(await fetch(u('ball_model.wasm'))).arrayBuffer();
+    for(const ep of(navigator.gpu?['webgpu','wasm']:['wasm'])){try{BNN.sess=await ort.InferenceSession.create(buf,{executionProviders:[ep]});BNN.ep=ep;break}catch(e){console.warn('balmodel',ep,e)}}
+    if(!BNN.sess)throw new Error('balmodel start niet');BNN.ort=ort;return BNN.sess})();
+  try{return await BNN.loading}catch(e){BNN.loading=null;throw e}}
+// 16:9 crop around the court area (the model wants 16:9; a crop makes the ball bigger than the whole picture would)
+function ballNNCrop(VW,VH,r){let w=Math.max(r.w,r.h*16/9),h=w*9/16;if(w>VW){w=VW;h=w*9/16}if(h>VH){h=VH;w=h*16/9}
+  const cx=r.x+r.w/2,cy=r.y+r.h/2;return{x:Math.min(Math.max(0,cx-w/2),VW-w),y:Math.min(Math.max(0,cy-h/2),VH-h),w,h}}
+// one frame -> planar float RGB, normalised
+function ballNNPrep(src,crop){
+  if(!BNN.cv){BNN.cv=document.createElement('canvas');BNN.cv.width=512;BNN.cv.height=288;BNN.ctx=BNN.cv.getContext('2d',{willReadFrequently:true});BNN.ctx.imageSmoothingEnabled=true;BNN.ctx.imageSmoothingQuality='high'}
+  BNN.ctx.drawImage(src,crop.x,crop.y,crop.w,crop.h,0,0,512,288);
+  const d=BNN.ctx.getImageData(0,0,512,288).data,n=BNN.N,o=new Float32Array(3*n);
+  for(let i=0,j=0;i<n;i++,j+=4){o[i]=(d[j]/255-0.485)/0.229;o[n+i]=(d[j+1]/255-0.456)/0.224;o[2*n+i]=(d[j+2]/255-0.406)/0.225}
+  return o}
+// three prepped frames (old -> new) -> ball candidates in the middle frame [{x,y,s}] (normalised video coords)
+async function ballNNRun(f0,f1,f2,crop,VW,VH,thr){thr=thr||0.5;const n=BNN.N,inp=new Float32Array(9*n);inp.set(f0,0);inp.set(f1,3*n);inp.set(f2,6*n);
+  const out=await BNN.sess.run({frames:new BNN.ort.Tensor('float32',inp,[1,9,288,512])});
+  const hm=out.heatmaps.data,base=n,seen=new Uint8Array(n),res=[],st=[];
+  for(let i=0;i<n;i++){if(seen[i]||hm[base+i]<=thr)continue;let sw=0,sx=0,sy=0;st.push(i);seen[i]=1;
+    while(st.length){const k=st.pop(),x=k%512,y=(k/512)|0,w=hm[base+k];sw+=w;sx+=x*w;sy+=y*w;
+      for(const q of[k-1,k+1,k-512,k+512]){if(q<0||q>=n||seen[q]||hm[base+q]<=thr)continue;if(Math.abs((q%512)-x)>1)continue;seen[q]=1;st.push(q)}}
+    res.push({x:(crop.x+(sx/sw+0.5)/512*crop.w)/VW,y:(crop.y+(sy/sw+0.5)/288*crop.h)/VH,s:sw})}
+  return res.sort((a,b)=>b.s-a.s).slice(0,6)}
+/*BALL-NN-END*/
 /*BALL-3D-BEGIN*/
 // Ball in 3D from one camera (like Hawk-Eye, but with a single camera).
 // 1. ballCamera: camera position, angle and focal length from the court calibration (homography + lens k).
@@ -2029,10 +2067,15 @@ function rally3d(pts,boxesAt,cam,opt={}){
       if(Math.sign(vA[1])!==Math.sign(vB[1])&&Math.abs(vA[1])>2&&Math.abs(vB[1])>2)c+=40;
       // a bounce costs speed: horizontally the ball keeps roughly 50-95% (topspin keeps more, slice less)
       const hA=Math.hypot(vA[0],vA[1]),hB=Math.hypot(vB[0],vB[1]);c+=Math.min(30,(Math.max(0,hB-0.95*hA)+Math.max(0,0.45*hA-hB))**2/(0.1*hA+1)**2)}
-    else{const z=(PA[2]+PB[2])/2;if(z<0.15)c+=Math.min(40,((0.15-z)/sz)**2)+(z<0.1?10:0);// a hit at ground level is rareif(z>3.2)c+=Math.min(40,((z-3.2)/sz)**2);
-      const flip=Math.sign(vA[1])!==Math.sign(vB[1]);if(!flip&&Math.abs(vA[1])>3)c+=40;
+    else{const z=(PA[2]+PB[2])/2;
+      if(z<0.15)c+=Math.min(40,((0.15-z)/sz)**2)+(z<0.1?20:0);// a hit at ground level is rare
+      if(z>3.2)c+=Math.min(40,((z-3.2)/sz)**2);
+      // a hit sends the ball away: the top of the serve toss (slow up, slow down) is not a hit
+      if(Math.hypot(...vB)<6)c+=30;
+      const flip=Math.sign(vA[1])!==Math.sign(vB[1]);const inc=Math.abs(vA[1])>3&&Math.hypot(...vA)>8;// incoming ball fast enough to know its direction (not a falling toss)
+      if(!flip&&inc)c+=40;
       // the hitter stands where the ball is: a near player hits a ball that was coming towards him (vA.y<0)
-      const Y=(PA[1]+PB[1])/2;if(Math.abs(vA[1])>3&&((Y<B3.NET-2&&vA[1]>0)||(Y>B3.NET+2&&vA[1]<0)))c+=40;
+      const Y=(PA[1]+PB[1])/2;if(inc&&((Y<B3.NET-2&&vA[1]>0)||(Y>B3.NET+2&&vA[1]<0)))c+=40;
       const ip=cam.project(PA[0],PA[1],PA[2]);
       const pers=ip&&(boxesAt?boxesAt(t):[]).some(b=>{const w=b.x1-b.x0,h=b.y1-b.y0,x=ip[0]/cam.W,y=ip[1]/cam.H;return x>b.x0-w*0.5&&x<b.x1+w*0.5&&y>b.y0-h*0.8&&y<b.y1});// up to a racket's length above the head (serve, smash)
       if(!pers)c+=6}
@@ -2052,7 +2095,8 @@ function rally3d(pts,boxesAt,cam,opt={}){
   const push=(p,q,st,cost,back)=>{const k=key(p,q,st),o=best.get(k);if(!o||cost<o.cost)best.set(k,{p,q,st,cost,back})};
   // start: a fast first flight means the serve already happened (direction tells who hit it)
   for(let q=1;q<m&&q<=B3.skip;q++){const s=seg(0,q);if(!s)continue;let st=[0,0,0];
-    if(s.kind==='flight'){const s0=b3At(s.fit,s.fit.t0);if(Math.abs(s0[4])>8)st=[1,0,s0[4]>0?1:2]}push(0,q,st,s.cost,null)}
+    if(s.kind==='flight'){const s0=b3At(s.fit,s.fit.t0);if(Math.abs(s0[4])>8&&Math.hypot(s0[3],s0[4])>15&&s.fit.rms<2.5)st=[1,0,s0[4]>0?1:2]}// only a fast first flight is the serve (not the toss)
+    push(0,q,st,s.cost,null)}
   for(let q=1;q<m-1;q++){
     const here=[...best.values()].filter(e=>e.q===q);if(!here.length)continue;
     for(const e of here){const A=seg(e.p,q);
@@ -2074,6 +2118,12 @@ function rally3d(pts,boxesAt,cam,opt={}){
     if(e.type==='bounce'&&!e.pre){const ip=cam.project(e.P[0],e.P[1],0);bounces.push({t:e.t,x:ip?ip[0]/cam.W:NaN,y:ip?ip[1]/cam.H:NaN,X:e.P[0],Y:e.P[1],kmh:Math.hypot(...e.vA)*3.6,d3:true})}
     else if(e.type==='hit'){// mark it where the ball was last seen before the contact (the 3D point is extrapolated)
       const lo=segs[i].obs[segs[i].obs.length-1];hits.push({t:e.t,x:lo.x,y:lo.y,X:e.P[0],Y:e.P[1],Z:e.P[2],kmh:Math.hypot(...e.vB)*3.6,half:side(e.P[1])==='near'?'dichtbij':'ver'})}
+    else if(e.type==='gap'&&segs[i].kind==='flight'&&segs[i+1]&&segs[i+1].kind==='flight'&&(()=>{
+      // ball lost around the racket, but it comes back the other way: there was a hit in the gap
+      const A=segs[i],Bs=segs[i+1],a=b3At(A.fit,A.fit.t1),b=b3At(Bs.fit,Bs.fit.t0);
+      if(!(Math.sign(a[4])!==Math.sign(b[4])&&Math.abs(a[4])>3&&Math.abs(b[4])>3&&Bs.fit.t0-A.fit.t1<0.8))return false;
+      const h=evCost(A,Bs,'hit'),lo=A.obs[A.obs.length-1];
+      hits.push({t:h.t,x:lo.x,y:lo.y,X:h.P[0],Y:h.P[1],Z:h.P[2],kmh:Math.hypot(...h.vB)*3.6,half:side(h.P[1])==='near'?'dichtbij':'ver',inferred:true});return true})()){}
     else if(e.type==='gap'){// Hawk-Eye style: a flight that goes into a gap and would land before it ends -> predicted bounce
       // only after a hit (after a bounce the next thing is a hit, not a second bounce)
       let prev=null;for(let j=i-1;j>=0;j--)if(evs[j].type!=='gap'){prev=evs[j];break}if(prev&&prev.type==='bounce')continue;
@@ -2247,6 +2297,8 @@ function findBounces(path,tmin){
   for(const q of strong){const p=path[q.i];if(out.every(o=>Math.abs(o.t-p.t)>0.25))out.push({t:p.t,x:p.x,y:p.y})}
   return out.sort((a,b)=>a.t-b.t);
 }
+function ballDetMode(){try{return localStorage.getItem('tcp:balldet')||'nn'}catch(e){return 'nn'}}
+$('#ballDet').value=ballDetMode();$('#ballDet').onchange=e=>{try{localStorage.setItem('tcp:balldet',e.target.value)}catch(_){}};
 async function analyzeBall(c,prog){
   const rally=c.label==='punt';
   const tc=rally?c.t0:Number.isFinite(c.tcManual)?c.tcManual:c.ana&&Number.isFinite(c.ana.tc)?c.ana.tc:c.t0+(c.t1-c.t0)*0.55;
@@ -2257,6 +2309,7 @@ async function analyzeBall(c,prog){
   // only look where a ball can be: above the court (+ margin), not on the neighbouring courts
   const chs=courtH(),space=chs&&chs.toImg?ballSpace((X,Y)=>applyH(chs.toImg,X,Y),v.videoWidth,v.videoHeight):null;
   const raw=[];let prevFp=null;
+  const useNN=!!BNN.sess&&ballDetMode()==='nn',nnCrop=useNN?ballNNCrop(v.videoWidth,v.videoHeight,r):null;
   // follow the player during the scan so his body (shoes, arms) is not mistaken for the ball
   let tr=null;const lm0=c.ana&&c.ana.lm?c.ana.lm.map(q=>({x:q[0],y:q[1],v:q[2]})):null;
   if(POSE.lm||POSE.lmImg){const a=c.target||(lm0?poseAnchor(lm0):null);if(a)tr={last:{x:a.x,y:a.y,h:a.h},app:c.target&&c.target.app||null}}
@@ -2273,11 +2326,16 @@ async function analyzeBall(c,prog){
       else if(POSE.lmImg)for(const P of detectAll(true))nb.push(bodyBox(P));
       if(tr||c.crop){const P=detectFor(c.crop,tr);if(P)nb.push(bodyBox(P))}
       if(nb.length||!(POSE.lmImg||POSE.det))boxes=nb}
-    raw.push({t:v.currentTime,g:grabFrame(r,scale),boxes});
-    // 5-frame window: compare with 1 and 2 frames away (a slow ball at the top of a lob stays visible)
-    if(raw.length>=5){const k=raw.length-3,bl=raw[k].boxes,out=b=>bl.every(bx=>b.x<bx.x0||b.x>bx.x1||b.y<bx.y0||b.y>bx.y1);
-      const bb=blobsFrom(raw[k-1].g,raw[k].g,raw[k+1].g,r,scale,v.videoWidth,v.videoHeight,space,false,raw[k-2].g,raw[k+2].g);raw[k].c=bb.s.filter(out);raw[k].w=bb.w.filter(out)}
-    if(raw.length>5)raw[raw.length-6].g=null;
+    raw.push({t:v.currentTime,g:useNN?null:grabFrame(r,scale),nn:useNN?ballNNPrep(v,nnCrop):null,boxes});
+    if(useNN){// AI model: 3 frames in, the ball in the middle one. No person-box filter: the model knows a ball from a racket,
+      // and the ball right at the racket (the contact) is exactly what we want to see
+      if(raw.length>=3){const k=raw.length-2,d=await ballNNRun(raw[k-1].nn,raw[k].nn,raw[k+1].nn,nnCrop,v.videoWidth,v.videoHeight);
+        raw[k].c=d.filter(b=>!space||space(b.x*v.videoWidth,b.y*v.videoHeight)).map(b=>({x:b.x,y:b.y,a:9,yel:20,sc:b.s}));raw[k].w=[]}
+      if(raw.length>3)raw[raw.length-4].nn=null}
+    else{// 5-frame window: compare with 1 and 2 frames away (a slow ball at the top of a lob stays visible)
+      if(raw.length>=5){const k=raw.length-3,bl=raw[k].boxes,out=b=>bl.every(bx=>b.x<bx.x0||b.x>bx.x1||b.y<bx.y0||b.y>bx.y1);
+        const bb=blobsFrom(raw[k-1].g,raw[k].g,raw[k+1].g,r,scale,v.videoWidth,v.videoHeight,space,false,raw[k-2].g,raw[k+2].g);raw[k].c=bb.s.filter(out);raw[k].w=bb.w.filter(out)}
+      if(raw.length>5)raw[raw.length-6].g=null}
     prog(i/n)}
   const frames=raw.filter(f=>f.c).map(f=>({t:f.t,c:f.c,w:f.w,boxes:f.boxes}));
   const W=v.videoWidth,H=v.videoHeight,tracks=linkTracks(frames,W,H);
@@ -2289,7 +2347,7 @@ async function analyzeBall(c,prog){
     return x=>{if(x<=P[0][0])return P[0][1];for(let i=1;i<P.length;i++)if(x<=P[i][0]){const f=(x-P[i-1][0])/(P[i][0]-P[i-1][0]);return P[i-1][1]+f*(P[i][1]-P[i-1][1])}return P[P.length-1][1]}})():null;
   if(window.__ballDbg)window.__ballDbg={r,frames,tracks};// for the test scripts (tools/ball)
   const enc=pts=>pts.map(p=>[+p.t.toFixed(3),+p.x.toFixed(4),+p.y.toFixed(4)]);
-  const res={v:6,tc,rally,tracks:[],bounces:[],hits:[],nDet:frames.reduce((a,f)=>a+f.c.length,0)};
+  const res={v:7,det:useNN?'nn':'motion',tc,rally,tracks:[],bounces:[],hits:[],nDet:frames.reduce((a,f)=>a+f.c.length,0)};
   if(rally||srv){
     // physics-linked tracks are already smooth: keep anything moving, drop pieces that mostly lie on a person (legs, racket)
     const fast=tracks.filter(t=>trackStraight(t)>=0.6&&trackSpeed(t)>=0.08&&t.pts.filter(inBox).length<=t.pts.length*0.3);
@@ -2361,6 +2419,9 @@ $('#bRally').onclick=async()=>{if(!hasVideo()){toast('Open eerst een video');ret
 $('#bBall').onclick=async()=>{
   const list=visibleClips();if(!list.length){toast('Nog geen clips');return}
   try{await loadPose()}catch(e){toast('Skeletmodel niet geladen: spelers worden niet uitgesloten',4000)}
+  if(ballDetMode()==='nn'&&!BNN.sess){$('#ballDetInfo').textContent='AI-balmodel laden…';
+    try{await ballNNLoad();$('#ballDetInfo').textContent='(draait op '+(BNN.ep==='webgpu'?'de videokaart':'de processor, trager')+')'}
+    catch(e){console.warn(e);$('#ballDetInfo').textContent='';toast('AI-balmodel niet geladen; de bal wordt gevolgd met de oude methode',5000)}}
   const r=await runExport('Bal volgen in '+list.length+' clips',async prog=>{for(let i=0;i<list.length;i++){const ok=await analyzeBall(list[i],p=>prog((i+p)/list.length));if(!ok)return null;persist()}return true});
   persist();render();
   if(r){const n=list.filter(c=>ballBounces(c.ball).length).length;toast('Bal gevolgd: stuitpunt(en) gevonden in '+n+' van '+list.length+' clips',5000)}

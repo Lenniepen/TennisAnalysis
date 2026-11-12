@@ -126,10 +126,15 @@ function rally3d(pts,boxesAt,cam,opt={}){
       if(Math.sign(vA[1])!==Math.sign(vB[1])&&Math.abs(vA[1])>2&&Math.abs(vB[1])>2)c+=40;
       // a bounce costs speed: horizontally the ball keeps roughly 50-95% (topspin keeps more, slice less)
       const hA=Math.hypot(vA[0],vA[1]),hB=Math.hypot(vB[0],vB[1]);c+=Math.min(30,(Math.max(0,hB-0.95*hA)+Math.max(0,0.45*hA-hB))**2/(0.1*hA+1)**2)}
-    else{const z=(PA[2]+PB[2])/2;if(z<0.15)c+=Math.min(40,((0.15-z)/sz)**2)+(z<0.1?10:0);// a hit at ground level is rareif(z>3.2)c+=Math.min(40,((z-3.2)/sz)**2);
-      const flip=Math.sign(vA[1])!==Math.sign(vB[1]);if(!flip&&Math.abs(vA[1])>3)c+=40;
+    else{const z=(PA[2]+PB[2])/2;
+      if(z<0.15)c+=Math.min(40,((0.15-z)/sz)**2)+(z<0.1?20:0);// a hit at ground level is rare
+      if(z>3.2)c+=Math.min(40,((z-3.2)/sz)**2);
+      // a hit sends the ball away: the top of the serve toss (slow up, slow down) is not a hit
+      if(Math.hypot(...vB)<6)c+=30;
+      const flip=Math.sign(vA[1])!==Math.sign(vB[1]);const inc=Math.abs(vA[1])>3&&Math.hypot(...vA)>8;// incoming ball fast enough to know its direction (not a falling toss)
+      if(!flip&&inc)c+=40;
       // the hitter stands where the ball is: a near player hits a ball that was coming towards him (vA.y<0)
-      const Y=(PA[1]+PB[1])/2;if(Math.abs(vA[1])>3&&((Y<B3.NET-2&&vA[1]>0)||(Y>B3.NET+2&&vA[1]<0)))c+=40;
+      const Y=(PA[1]+PB[1])/2;if(inc&&((Y<B3.NET-2&&vA[1]>0)||(Y>B3.NET+2&&vA[1]<0)))c+=40;
       const ip=cam.project(PA[0],PA[1],PA[2]);
       const pers=ip&&(boxesAt?boxesAt(t):[]).some(b=>{const w=b.x1-b.x0,h=b.y1-b.y0,x=ip[0]/cam.W,y=ip[1]/cam.H;return x>b.x0-w*0.5&&x<b.x1+w*0.5&&y>b.y0-h*0.8&&y<b.y1});// up to a racket's length above the head (serve, smash)
       if(!pers)c+=6}
@@ -149,7 +154,8 @@ function rally3d(pts,boxesAt,cam,opt={}){
   const push=(p,q,st,cost,back)=>{const k=key(p,q,st),o=best.get(k);if(!o||cost<o.cost)best.set(k,{p,q,st,cost,back})};
   // start: a fast first flight means the serve already happened (direction tells who hit it)
   for(let q=1;q<m&&q<=B3.skip;q++){const s=seg(0,q);if(!s)continue;let st=[0,0,0];
-    if(s.kind==='flight'){const s0=b3At(s.fit,s.fit.t0);if(Math.abs(s0[4])>8)st=[1,0,s0[4]>0?1:2]}push(0,q,st,s.cost,null)}
+    if(s.kind==='flight'){const s0=b3At(s.fit,s.fit.t0);if(Math.abs(s0[4])>8&&Math.hypot(s0[3],s0[4])>15&&s.fit.rms<2.5)st=[1,0,s0[4]>0?1:2]}// only a fast first flight is the serve (not the toss)
+    push(0,q,st,s.cost,null)}
   for(let q=1;q<m-1;q++){
     const here=[...best.values()].filter(e=>e.q===q);if(!here.length)continue;
     for(const e of here){const A=seg(e.p,q);
@@ -171,6 +177,12 @@ function rally3d(pts,boxesAt,cam,opt={}){
     if(e.type==='bounce'&&!e.pre){const ip=cam.project(e.P[0],e.P[1],0);bounces.push({t:e.t,x:ip?ip[0]/cam.W:NaN,y:ip?ip[1]/cam.H:NaN,X:e.P[0],Y:e.P[1],kmh:Math.hypot(...e.vA)*3.6,d3:true})}
     else if(e.type==='hit'){// mark it where the ball was last seen before the contact (the 3D point is extrapolated)
       const lo=segs[i].obs[segs[i].obs.length-1];hits.push({t:e.t,x:lo.x,y:lo.y,X:e.P[0],Y:e.P[1],Z:e.P[2],kmh:Math.hypot(...e.vB)*3.6,half:side(e.P[1])==='near'?'dichtbij':'ver'})}
+    else if(e.type==='gap'&&segs[i].kind==='flight'&&segs[i+1]&&segs[i+1].kind==='flight'&&(()=>{
+      // ball lost around the racket, but it comes back the other way: there was a hit in the gap
+      const A=segs[i],Bs=segs[i+1],a=b3At(A.fit,A.fit.t1),b=b3At(Bs.fit,Bs.fit.t0);
+      if(!(Math.sign(a[4])!==Math.sign(b[4])&&Math.abs(a[4])>3&&Math.abs(b[4])>3&&Bs.fit.t0-A.fit.t1<0.8))return false;
+      const h=evCost(A,Bs,'hit'),lo=A.obs[A.obs.length-1];
+      hits.push({t:h.t,x:lo.x,y:lo.y,X:h.P[0],Y:h.P[1],Z:h.P[2],kmh:Math.hypot(...h.vB)*3.6,half:side(h.P[1])==='near'?'dichtbij':'ver',inferred:true});return true})()){}
     else if(e.type==='gap'){// Hawk-Eye style: a flight that goes into a gap and would land before it ends -> predicted bounce
       // only after a hit (after a bounce the next thing is a hit, not a second bounce)
       let prev=null;for(let j=i-1;j>=0;j--)if(evs[j].type!=='gap'){prev=evs[j];break}if(prev&&prev.type==='bounce')continue;
