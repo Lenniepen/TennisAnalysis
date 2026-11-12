@@ -7,7 +7,7 @@ const boxesAt=t=>{let b=[],bd=1;for(const f of dbg.frames){const d=Math.abs(f.t-
 const r=rally3d(b3Points(dbg.tracks.map(t=>t.pts)),boxesAt,cam,{hints:(dbg.bounces||[]).concat(dbg.hits||[]).map(e=>e.t)});
 const inS=(X,Y)=>Math.abs(X)<=4.115+0.03&&Y>=-0.03&&Y<=23.77+0.03;
 const out={bounces:r.bounces.map(b=>({t:b.t,x:b.x,y:b.y,X:b.X,Y:b.Y,pred:!!b.pred,call:inS(b.X,b.Y)?'in':'uit'})),
-  hits:r.hits.map(h=>({t:h.t,x:h.x,y:h.y,kmh:Math.round(h.kmh),z:h.Z})),curves:r.curves,serve:r.serve,judge:serveJudge(r.serve,1.85),
+  hits:r.hits.map(h=>({t:h.t,x:h.x,y:h.y,kmh:h.kmh==null?null:Math.round(h.kmh),z:h.Z})),curves:r.curves,serve:r.serve,judge:serveJudge(r.serve,1.85),
   pts:b3Points(dbg.tracks.map(t=>t.pts))};
 // first, simple stroke type: serve = the first hit; volley = no bounce since the previous hit; smash = contact above 2.3 m;
 // otherwise forehand/backhand from the side of the body where the ball is hit (person box nearest to the ball).

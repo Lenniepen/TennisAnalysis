@@ -8,7 +8,7 @@
 //    Rules (ITF): hits alternate between the sides; at most one bounce between two hits (second bounce = end of the point);
 //    the return of serve must bounce first; bounces before the serve are the server bouncing the ball. In doubt: penalties,
 //    never hard stops.
-const B3={G:9.81,KD:0.0197,KM:0.0359,sig:1.5,hub:3,cap:14,spinSd:0.2,maxSeg:2.6,minPts:5,skip:12,NET:11.885,L:23.77,HW:5.485};
+const B3={joint:false,G:9.81,KD:0.0197,KM:0.0359,sig:1.5,hub:3,cap:14,spinSd:0.2,maxSeg:2.6,minPts:5,skip:12,NET:11.885,L:23.77,HW:5.485};
 // pts: the 4 calibration points (normalised), ref: their court positions in metres (default: the two baselines)
 function ballCamera(pts,k,W,H,ref){
   k=k||0;const s=Math.hypot(W,H)/2,cx=W/2,cy=H/2;
@@ -78,6 +78,36 @@ function b3LM(q,obs,cam,spin,iters){const np=spin?8:6;q=q.slice();if(q.length<8)
       if(c.cost<cur.cost){const imp=cur.cost-c.cost;q=nq;cur=c;lam=Math.max(1e-6,lam/3);ok=true;if(imp<1e-4*cur.cost+1e-3)it=iters;break}lam*=5}
     if(!ok)break}
   return{q,cost:cur.cost}}
+// generic Levenberg-Marquardt on a residual function (fixed-length residual vector)
+function b3LMg(q,res,iters){q=q.slice();const np=q.length;let r0=res(q),cur=r0.reduce((a,x)=>a+x*x,0),lam=1e-2;
+  for(let it=0;it<iters;it++){const J=[];for(let j=0;j<np;j++){const e=1e-3*Math.max(1,Math.abs(q[j])),qq=q.slice();qq[j]+=e;const r=res(qq);J.push(r.map((x,i)=>(x-r0[i])/e))}
+    const JtJ=[],Jtr=[];for(let a=0;a<np;a++){let s=0;for(let i=0;i<r0.length;i++)s+=J[a][i]*r0[i];Jtr.push(-s);JtJ.push([]);for(let b=0;b<np;b++){let t=0;for(let i=0;i<r0.length;i++)t+=J[a][i]*J[b][i];JtJ[a].push(t)}}
+    let ok=false;for(let tr=0;tr<6;tr++){const M=JtJ.map((row,a)=>row.map((x,b)=>a===b?x*(1+lam)+1e-6:x)),dq=b3Solve(M,Jtr);if(!dq)break;
+      const nq=q.map((x,j)=>x+dq[j]),r=res(nq),c=r.reduce((a,x)=>a+x*x,0);if(c<cur){const imp=cur-c;q=nq;r0=r;cur=c;lam=Math.max(1e-6,lam/3);ok=true;if(imp<1e-4*cur+1e-3)it=iters;break}lam*=5}
+    if(!ok)break}
+  return{q,cost:cur}}
+// Two flights around one moment, fitted together with a shared meeting point (Hawk-Eye style hypothesis test).
+// type 'bounce': the point lies on the ground. type 'hit': the point lies at the hitter (feet = person box bottom on the
+// ground; that is reliable on the far side too, where the depth of a ball in the air is not). Returns {cost,P,t,vA,vB}.
+function b3Joint(type,obsA,obsB,init,cam,feet){
+  const bounce=type==='bounce',ta=obsA[obsA.length-1].t,tb=obsB[0].t;
+  const unpack=q=>{let i=0;const X=q[i++],Y=q[i++],Z=bounce?0:q[i++],tE=q[i++],vA=[q[i++],q[i++],q[i++]],sA=[q[i++],q[i++]],vB=[q[i++],q[i++],q[i++]],sB=[q[i++],q[i++]];return{P:[X,Y,Z],tE,vA,sA,vB,sB}};
+  const proj=(S,obs,r)=>{for(let i=0;i<obs.length;i++){const s=S[i],o=obs[i],p=s&&cam.project(s[0],s[1],s[2]);let ex=200,ey=200;if(p){ex=p[0]-o.x*cam.W;ey=p[1]-o.y*cam.H}
+    const a=Math.hypot(ex,ey)/B3.sig,hb=B3.hub/B3.sig,c=Math.min(B3.cap,a<=hb?a*a:hb*(2*a-hb)),w=a>1e-9?Math.sqrt(c)/a:1;r.push(ex/B3.sig*w,ey/B3.sig*w,Math.max(0,-0.03-(s?s[2]:0))/0.05)}};
+  const res=q=>{const u=unpack(q),r=[];
+    proj(b3Sim([...u.P,...u.vA,...u.sA],u.tE,obsA.map(o=>o.t)),obsA,r);proj(b3Sim([...u.P,...u.vB,...u.sB],u.tE,obsB.map(o=>o.t)),obsB,r);
+    r.push(u.sA[0]/B3.spinSd,u.sA[1]/B3.spinSd,u.sB[0]/B3.spinSd,u.sB[1]/B3.spinSd);
+    r.push(Math.max(0,ta-0.03-u.tE,u.tE-tb-0.03)/0.01);// the moment lies in the gap between the two pieces
+    r.push(Math.max(0,Math.hypot(...u.vA)-65)/5,Math.max(0,Math.hypot(...u.vB)-65)/5);
+    const hA=Math.hypot(u.vA[0],u.vA[1]),hB=Math.hypot(u.vB[0],u.vB[1]);
+    if(bounce){r.push(Math.max(0,u.vA[2])/1,Math.max(0,-u.vB[2])/0.3,Math.max(0,hB-0.95*hA)/(0.1*hA+1),Math.max(0,0.45*hA-hB)/(0.1*hA+1),0,0,0)}
+    else{const z=u.P[2];r.push(Math.max(0,0.2-z,z-3.2)/0.15,Math.max(0,6-Math.hypot(...u.vB))/1.2);
+      // a real hit turns the ball back along the court (unless the incoming ball was slow, e.g. the serve toss)
+      const inc=Math.abs(u.vA[1])>3&&Math.hypot(...u.vA)>8;r.push(inc&&Math.sign(u.vA[1])===Math.sign(u.vB[1])?Math.min(6,Math.abs(u.vB[1])):0);
+      if(feet){r.push((u.P[0]-feet[0])/1.2,(u.P[1]-feet[1])/1.0)}else r.push(3,3);r.push(0)}// no player at the ball: a hit is unlikely
+    return r};
+  const q0=[init.P[0],init.P[1]];if(!bounce)q0.push(Math.min(3,Math.max(0.3,init.P[2])));q0.push(Math.min(tb,Math.max(ta,init.t)),...init.vA,0,0,...init.vB,0,0);
+  const r=b3LMg(q0,res,25),u=unpack(r.q);return{cost:r.cost,P:u.P,t:u.tE,vA:u.vA,vB:u.vB}}
 // fit one flight on obs [{t,x,y}] (normalised image coords)
 function fit3d(obs,cam){const n=obs.length;if(n<B3.minPts)return null;
   const a=obs[0],b=obs[n-1],T=b.t-a.t;if(T<=0)return null;let best=null;
@@ -172,6 +202,23 @@ function rally3d(pts,boxesAt,cam,opt={}){
   // back-track
   const chain=[];for(let e=fin;e;e=e.back&&e.back.e){chain.unshift(e)}
   const segs=chain.map(e=>seg(e.p,e.q)),evs=[];for(let i=1;i<chain.length;i++){const b=chain[i].back;evs.push({type:b.ty,...b.ev,pre:b.pre,serve:b.ty!=='bounce'&&b.e.st[0]===0&&chain[i].st[0]>=1})}// the moment the serve phase starts
+  // ---- refine: every bounce/hit (and every gap where the ball comes back) gets a joint fit of the two flights around it,
+  // once as a bounce (meeting point on the ground) and once as a hit (meeting point at the hitter's feet). The cheaper
+  // explanation wins, and its velocities give the speeds (the hitter's position fixes the depth on the far side).
+  // players that can have hit the ball: the ball (just before the moment) lies beside or above their box
+  const feetAt=(t,ip)=>(boxesAt?boxesAt(t):[]).filter(b=>{const w=b.x1-b.x0,h=b.y1-b.y0;return ip.x>b.x0-w&&ip.x<b.x1+w&&ip.y>b.y0-h&&ip.y<b.y1+0.2*h})
+    .map(b=>cam.atHeight((b.x0+b.x1)/2,b.y1,0)).filter(Boolean).slice(0,3);
+  // (switched off by default: on punt 3 it made more mistakes than the rules; B3.joint=true to try)
+  if(B3.joint)for(let i=0;i<evs.length;i++){const e=evs[i],A=segs[i],Bs=segs[i+1];if(!A||!Bs||A.kind!=='flight'||Bs.kind!=='flight'||e.pre)continue;
+    const a=b3At(A.fit,A.fit.t1),b=b3At(Bs.fit,Bs.fit.t0),turn=Math.sign(a[4])!==Math.sign(b[4]);
+    if(e.type==='gap'&&!(turn&&Bs.obs[0].t-A.obs[A.obs.length-1].t<0.8))continue;
+    const oA=A.obs.slice(-12),oB=Bs.obs.slice(0,12),lo=A.obs[A.obs.length-1];
+    const jb=b3Joint('bounce',oA,oB,evCost(A,Bs,'bounce'),cam,null),iH=evCost(A,Bs,'hit');
+    let jh=null;for(const f of[...feetAt(iH.t,lo),null]){const j=b3Joint('hit',oA,oB,iH,cam,f);if(!jh||j.cost<jh.cost)jh=j}
+    // keep the type the rules chose unless the other explanation is clearly better; the serve stays a hit
+    const cur=e.type==='bounce'?'bounce':e.type==='hit'?'hit':null,M=8;
+    let typ=cur==='bounce'?(jh.cost<jb.cost-M?'hit':'bounce'):cur==='hit'?(jb.cost<jh.cost-M&&!e.serve?'bounce':'hit'):(jb.cost<=jh.cost?'bounce':'hit');
+    const w=typ==='bounce'?jb:jh;e.type=typ;e.P=w.P;e.t=w.t;e.vA=w.vA;e.vB=w.vB;e.joint={b:+jb.cost.toFixed(1),h:+jh.cost.toFixed(1)}}
   const bounces=[],hits=[],predicted=[];
   for(let i=0;i<evs.length;i++){const e=evs[i];
     if(e.type==='bounce'&&!e.pre){const ip=cam.project(e.P[0],e.P[1],0);bounces.push({t:e.t,x:ip?ip[0]/cam.W:NaN,y:ip?ip[1]/cam.H:NaN,X:e.P[0],Y:e.P[1],kmh:Math.hypot(...e.vA)*3.6,d3:true})}
@@ -181,7 +228,7 @@ function rally3d(pts,boxesAt,cam,opt={}){
       // ball lost around the racket, but it comes back the other way: there was a hit in the gap
       const A=segs[i],Bs=segs[i+1],a=b3At(A.fit,A.fit.t1),b=b3At(Bs.fit,Bs.fit.t0);
       if(!(Math.sign(a[4])!==Math.sign(b[4])&&Math.abs(a[4])>3&&Math.abs(b[4])>3&&Bs.fit.t0-A.fit.t1<0.8))return false;
-      const h=evCost(A,Bs,'hit'),lo=A.obs[A.obs.length-1];
+      const h=evCost(A,Bs,'hit'),lo=A.obs[A.obs.length-1];if(h.P[2]<0.3)return false;// not at ground level
       hits.push({t:h.t,x:lo.x,y:lo.y,X:h.P[0],Y:h.P[1],Z:h.P[2],kmh:Math.hypot(...h.vB)*3.6,half:side(h.P[1])==='near'?'dichtbij':'ver',inferred:true});return true})()){}
     else if(e.type==='gap'){// Hawk-Eye style: a flight that goes into a gap and would land before it ends -> predicted bounce
       // only after a hit (after a bounce the next thing is a hit, not a second bounce)
@@ -189,6 +236,14 @@ function rally3d(pts,boxesAt,cam,opt={}){
       const A=segs[i],Bs=segs[i+1];if(A.kind!=='flight')continue;const ta=A.obs[A.obs.length-1].t,tb=Bs.obs[0].t;if(tb-ta<0.12)continue;
       const ts=[];for(let t=ta;t<=tb;t+=0.01)ts.push(t);const S=b3Sim(A.fit.q,A.fit.t0,ts);const j=S.findIndex(s=>s[2]<=0);
       if(j>0&&S[j][5]<0){const s=S[j],ip=cam.project(s[0],s[1],0);if(ip&&Math.abs(s[0])<9&&s[1]>-4&&s[1]<B3.L+5)predicted.push({t:ts[j],x:ip[0]/cam.W,y:ip[1]/cam.H,X:s[0],Y:s[1],kmh:Math.hypot(s[3],s[4],s[5])*3.6,pred:true,d3:true})}}}
+  // speed of a hit = average over the ground from the hitter to the next bounce. Both points lie on the ground, so this is
+  // reliable on the far side too (the speed of a ball in the air there is not: its depth is uncertain). No bounce before
+  // the next hit (volley) or the end (ball in the net): no speed rather than a wrong one.
+  bounces.sort((a,b)=>a.t-b.t);hits.sort((a,b)=>a.t-b.t);
+  for(let k=0;k<hits.length;k++){const h=hits[k],nh=hits[k+1],other=b=>side(b.Y)!==side(h.Y),b=bounces.find(b=>b.t>h.t+0.1&&(!nh||b.t<nh.t)&&!b.pred&&other(b))||predicted.find(b=>b.t>h.t+0.1&&(!nh||b.t<nh.t)&&other(b));// the bounce on the other side
+    h.kmh3d=h.kmh;h.kmh=null;if(!b)continue;
+    const f=feetAt(h.t,{x:h.x,y:h.y});let P=[h.X,h.Y];if(f.length){f.sort((a,c)=>Math.hypot(a[0]-h.X,a[1]-h.Y)-Math.hypot(c[0]-h.X,c[1]-h.Y));P=[f[0][0],f[0][1]]}
+    const d=Math.hypot(b.X-P[0],b.Y-P[1]),dt=b.t-h.t;if(dt>0.15&&d>2)h.kmh=d/dt*3.6}
   // fitted curves (for drawing, also through gaps of a flight)
   // curves in the picture and in 3D ([t,X,Y,Z] in metres, for the 3D viewer); a flight is extended to its events
   // (built after the serve is known: the serve flight starts at the contact, the toss ends there)

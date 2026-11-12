@@ -37,7 +37,7 @@ while True:
         if not (h['t'] <= t <= h['t'] + 2.0): continue
         c = P(h['x'], h['y']); s = 7
         cv2.line(f, (c[0] - s, c[1] - s), (c[0] + s, c[1] + s), (255, 255, 255), 2); cv2.line(f, (c[0] + s, c[1] - s), (c[0] - s, c[1] + s), (255, 255, 255), 2)
-        if t - h['t'] < 1.5: label(f, f"{h.get('type', 'slag')}  {h['kmh']} km/u, raakhoogte {h['z']:.1f} m".replace('.', ','), c, (255, 255, 255))
+        if t - h['t'] < 1.5: label(f, (f"{h.get('type', 'slag')}  " + (f"gem. {h['kmh']} km/u, " if h.get('kmh') else '') + f"raakhoogte {h['z']:.1f} m").replace('.', ','), c, (255, 255, 255))
     s = E.get('serve')
     if s and s['t'] - 0.2 <= t <= s['t'] + 3:
         j = E.get('judge') or {}
