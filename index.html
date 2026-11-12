@@ -250,6 +250,7 @@ details.info{margin-top:10px}details.info summary{cursor:pointer;color:var(--mut
     <button class="btn pri" id="bBall" style="width:100%">Bal volgen in clips</button>
     <canvas id="courtMap" style="width:100%;margin-top:8px;border-radius:8px;display:block"></canvas>
     <div id="ballTable"></div>
+    <div id="serveBox"></div>
     <button class="btn" id="bCourtPng" style="width:100%;margin-top:8px">Stuitpunten (png)</button>
     <button class="btn" id="b3d" style="width:100%;margin-top:8px" title="De balbanen van het gekozen punt in 3D: zelf draaien en zoomen, loopt mee met de video">Bekijk in 3D</button>
     <details class="info"><summary>Uitleg</summary><div class="note">Volgt de gele bal via beweging en kleur, zoekt het stuitpunt na het raken en rekent dat met de kalibratie om naar de baan. Snelheid = gemiddelde van raken tot stuit (lager dan de topsnelheid). De kalibratie wordt ook gebruikt voor de service-metingen in meters. Werkt het best met een vaste camera en 60 fps of meer. Experimenteel.</div></details>
@@ -1789,11 +1790,13 @@ function ballSpace(toImg,VW,VH){const M=2.5,HW=5.485,L=23.77;
   const side=(a,b,x,y)=>(b[0]-a[0])*(y-a[1])-(b[1]-a[1])*(x-a[0]);// sign: left/right of line a->b
   const sl=Math.sign(side(nl,fl,nr[0],nr[1])),sr=Math.sign(side(nr,fr,nl[0],nl[1])),sn=Math.sign(side(nl,nr,fl[0],fl[1]));
   const topY=Math.min(fl[1],fr[1]);
+  // a high ball close to the camera (the serve toss, a lob over the near player) also shows up above the far end, but
+  // wider: allow up to the near baseline corners there
+  const c0=toImg(-HW,0),c1=toImg(HW,0),ux0=Math.min(fl[0],c0&&isFinite(c0[0])?c0[0]:fl[0])-0.03*VW,ux1=Math.max(fr[0],c1&&isFinite(c1[0])?c1[0]:fr[0])+0.03*VW;
   return(x,y)=>{
     if(side(nl,nr,x,y)*sn<0)return false;// in front of the near margin (closer to the camera)
     if(y>=topY)return side(nl,fl,x,y)*sl>=0&&side(nr,fr,x,y)*sr>=0;// ground area: between the (extended) sidelines
-    // above the far end: straight up from the far margin
-    return x>=fl[0]-0.02*VW&&x<=fr[0]+0.02*VW}}
+    return x>=ux0&&x<=ux1}}
 // candidates in the middle frame: pixels that differ from BOTH neighbours (the object is here now, not before/after)
 // noIso: skip the isolation test (near the hand at the moment of contact the ball touches the racket)
 // prev2/next2 (optional, 2 frames away): a slow ball (top of a lob) moves less than its own width per frame and
@@ -2030,7 +2033,7 @@ function rally3d(pts,boxesAt,cam,opt={}){
       // the hitter stands where the ball is: a near player hits a ball that was coming towards him (vA.y<0)
       const Y=(PA[1]+PB[1])/2;if(Math.abs(vA[1])>3&&((Y<B3.NET-2&&vA[1]>0)||(Y>B3.NET+2&&vA[1]<0)))c+=40;
       const ip=cam.project(PA[0],PA[1],PA[2]);
-      const pers=ip&&(boxesAt?boxesAt(t):[]).some(b=>{const w=b.x1-b.x0,h=b.y1-b.y0,x=ip[0]/cam.W,y=ip[1]/cam.H;return x>b.x0-w*0.5&&x<b.x1+w*0.5&&y>b.y0-h*0.3&&y<b.y1});
+      const pers=ip&&(boxesAt?boxesAt(t):[]).some(b=>{const w=b.x1-b.x0,h=b.y1-b.y0,x=ip[0]/cam.W,y=ip[1]/cam.H;return x>b.x0-w*0.5&&x<b.x1+w*0.5&&y>b.y0-h*0.8&&y<b.y1});// up to a racket's length above the head (serve, smash)
       if(!pers)c+=6}
     return{cost:c,t,P:type==='bounce'?[(PA[0]+PB[0])/2,(PA[1]+PB[1])/2,0]:PA.slice(0,3).map((x,i)=>(x+PB[i])/2),vA,vB}};
   // rule state: phase 0 = before the serve, 1 = serve in the air (return must bounce), 2 = rally; nb = bounces since the last hit;
@@ -2064,7 +2067,7 @@ function rally3d(pts,boxesAt,cam,opt={}){
   if(!fin)return null;
   // back-track
   const chain=[];for(let e=fin;e;e=e.back&&e.back.e){chain.unshift(e)}
-  const segs=chain.map(e=>seg(e.p,e.q)),evs=[];for(let i=1;i<chain.length;i++){const b=chain[i].back;evs.push({type:b.ty,...b.ev,pre:b.pre})}
+  const segs=chain.map(e=>seg(e.p,e.q)),evs=[];for(let i=1;i<chain.length;i++){const b=chain[i].back;evs.push({type:b.ty,...b.ev,pre:b.pre,serve:b.ty!=='bounce'&&b.e.st[0]===0&&chain[i].st[0]>=1})}// the moment the serve phase starts
   const bounces=[],hits=[],predicted=[];
   for(let i=0;i<evs.length;i++){const e=evs[i];
     if(e.type==='bounce'&&!e.pre){const ip=cam.project(e.P[0],e.P[1],0);bounces.push({t:e.t,x:ip?ip[0]/cam.W:NaN,y:ip?ip[1]/cam.H:NaN,X:e.P[0],Y:e.P[1],kmh:Math.hypot(...e.vA)*3.6,d3:true})}
@@ -2078,9 +2081,11 @@ function rally3d(pts,boxesAt,cam,opt={}){
       if(j>0&&S[j][5]<0){const s=S[j],ip=cam.project(s[0],s[1],0);if(ip&&Math.abs(s[0])<9&&s[1]>-4&&s[1]<B3.L+5)predicted.push({t:ts[j],x:ip[0]/cam.W,y:ip[1]/cam.H,X:s[0],Y:s[1],kmh:Math.hypot(s[3],s[4],s[5])*3.6,pred:true,d3:true})}}}
   // fitted curves (for drawing, also through gaps of a flight)
   // curves in the picture and in 3D ([t,X,Y,Z] in metres, for the 3D viewer); a flight is extended to its events
-  const curves=[],curves3d=[];
-  segs.forEach((s,i)=>{if(s.kind!=='flight')return;let ta=s.fit.t0,tb=s.fit.t1;
+  // (built after the serve is known: the serve flight starts at the contact, the toss ends there)
+  const curves=[],curves3d=[];let serveSeg=null,serveT=null;
+  const mkCurves=()=>segs.forEach((s,i)=>{if(s.kind!=='flight')return;let ta=s.fit.t0,tb=s.fit.t1;
     const eb=evs[i-1],ea=evs[i];if(eb&&eb.type!=='gap'&&eb.t<ta)ta=eb.t;if(ea&&ea.type!=='gap'&&ea.t>tb)tb=ea.t;
+    if(s===serveSeg&&serveT<ta)ta=serveT;if(segs[i+1]===serveSeg&&serveT>tb)tb=serveT;
     const ts=[];for(let t=ta;t<tb;t+=0.02)ts.push(t);ts.push(tb);const S=b3Sim(s.fit.q,s.fit.t0,ts);
     curves.push(S.map((st,j)=>{const p=cam.project(st[0],st[1],st[2]);return p?[+ts[j].toFixed(3),+(p[0]/cam.W).toFixed(4),+(p[1]/cam.H).toFixed(4)]:null}).filter(Boolean));
     curves3d.push(S.map((st,j)=>[+ts[j].toFixed(3),+st[0].toFixed(2),+st[1].toFixed(2),+Math.max(0,st[2]).toFixed(2)]))});
@@ -2089,7 +2094,61 @@ function rally3d(pts,boxesAt,cam,opt={}){
     let bi=-1,bd=1;for(let i=0;i+1<segs.length;i++){const d=Math.abs(segs[i].obs[segs[i].obs.length-1].t-t);if(d<bd){bd=d;bi=i}}if(bi<0)return null;
     const A=segs[bi],Bs=segs[bi+1];if(A.kind!=='flight'||Bs.kind!=='flight')return{kinds:A.kind+'/'+Bs.kind,t:A.obs[A.obs.length-1].t};
     const o={t:A.obs[A.obs.length-1].t};for(const ty of['bounce','hit']){const e=evCost(A,Bs,ty);o[ty]=+e.cost.toFixed(1);o[ty+'P']=e.P.map(x=>+x.toFixed(2));o[ty+'vA']=e.vA.map(x=>+x.toFixed(1));o[ty+'vB']=e.vB.map(x=>+x.toFixed(1))}return o};
-  return{diag,bounces:bounces.concat(predicted).sort((a,b)=>a.t-b.t),hits,curves,curves3d,cam:cam.C.map(x=>+x.toFixed(2)),flights,events:evs.map(e=>({type:e.type,t:e.t,pre:!!e.pre,P:e.P&&e.P.map(x=>+x.toFixed(2))})),cost:fin.cost,nCand:m}}
+  // ---- the serve: flight after the serve hit (or the first fast flight when the hit itself was not seen)
+  let serve=null;
+  {let si=-1,hitEv=null;const k=evs.findIndex(e=>e.serve);if(k>=0){si=k+1;hitEv=evs[k]}else if(chain[0].st[0]===1&&segs[0].kind==='flight')si=0;
+    const S=si>=0?segs[si]:null;
+    if(S&&S.kind==='flight'){const fit=S.fit,s0=b3At(fit,fit.t0),dir=s0[4]>0?1:-1,nearSrv=dir>0;
+      // server: the person whose feet stand near the baseline at the serving end
+      let feet=null;const bl=nearSrv?0:B3.L;
+      for(const b of(boxesAt?boxesAt(fit.t0-0.15):[])){const g=cam.atHeight((b.x0+b.x1)/2,b.y1,0);if(!g||Math.abs(g[1]-bl)>4)continue;if(!feet||Math.abs(g[1]-bl)<Math.abs(feet[1]-bl))feet=g}
+      let C=null,tc=null;
+      const yc=(feet?feet[1]:bl-dir*0.3)+dir*0.4;// contact plane: ~0.4 m in front of the feet
+      const tossEnd=si>0&&segs[si-1]?segs[si-1].obs[segs[si-1].obs.length-1]:null;let how='';
+      if(tossEnd&&tossEnd.t>fit.t0-0.4){
+        // the toss was seen up to (almost) the contact: its last image point is exact, the depth comes from the server's
+        // position. Much steadier than meeting two extrapolated flights.
+        const d=cam.ray(tossEnd.x,tossEnd.y),s_=(yc-cam.C[1])/d[1];if(s_>0){C=cam.C.map((c,i)=>c+s_*d[i]);tc=tossEnd.t;how='opgooi'}}
+      if(!C&&hitEv&&hitEv.type==='hit'){C=hitEv.P;tc=hitEv.t;how='3d'}
+      if(!C){how='terug';// back along the flight to where the ball is ~0.4 m in front of the server's feet (contact is in front of the body)
+        const ts=[];for(let t=fit.t0;t>=fit.t0-0.8;t-=0.005)ts.push(t);ts.reverse();
+        const SS=b3Sim(fit.q,fit.t0,ts);for(let i=SS.length-1;i>=0;i--){if((SS[i][1]-yc)*dir<=0){C=SS[i].slice(0,3);tc=ts[i];break}}
+        if(!C){C=s0.slice(0,3);tc=fit.t0}}
+      const sc=b3Sim(fit.q,fit.t0,[Math.min(tc,fit.t0)])[0],kmh=Math.hypot(sc[3],sc[4],sc[5])*3.6;
+      // over the net
+      const tn=[];for(let t=fit.t0;t<=fit.t1+0.6;t+=0.005)tn.push(t);const SN=b3Sim(fit.q,fit.t0,tn);
+      let net=null;for(const s of SN)if((s[1]-B3.NET)*dir>=0){const hN=0.914+(1.07-0.914)*Math.min(1,Math.abs(s[0])/(B3.HW+0.914));net={X:s[0],Z:s[2],clear:s[2]-hN};break}
+      // landing: the first bounce after the serve, else where the flight reaches the ground
+      let land=null;const ne=evs.slice(si).find(e=>e.type!=='gap');
+      if(ne&&ne.type==='bounce')land={X:ne.P[0],Y:ne.P[1],t:ne.t};
+      else{const g=SN.findIndex(s=>s[2]<=0&&s[5]<0);if(g>=0)land={X:SN[g][0],Y:SN[g][1],t:tn[g],pred:true}}
+      const sX=feet?feet[0]:C[0];
+      serve={t:tc,kmh,contact:C,how,feet,server:nearSrv?'dichtbij':'ver',side:(nearSrv?sX>0:sX<0)?'deuce':'ad',net,land};serveSeg=S;serveT=tc}}
+  mkCurves();
+  return{serve,diag,bounces:bounces.concat(predicted).sort((a,b)=>a.t-b.t),hits,curves,curves3d,cam:cam.C.map(x=>+x.toFixed(2)),flights,events:evs.map(e=>({type:e.type,t:e.t,pre:!!e.pre,P:e.P&&e.P.map(x=>+x.toFixed(2))})),cost:fin.cost,nCand:m}}
+// ---- serve: judge it and turn the numbers into plain advice (no AI needed). h = player height in m (optional)
+function serveJudge(s,h){if(!s)return null;const SV=6.40,SW=4.115,near=s.server==='dichtbij',dir=near?1:-1,out={fb:[]};
+  const sx=s.side==='deuce'?(near?1:-1):(near?-1:1);// sign of X of the server's half; the target box is on the other half
+  if(s.land){const X=s.land.X,Y=s.land.Y,dNet=(Y-B3.NET)*dir,xs=-sx*X;// xs: across the box, 0 = centre line, SW = side line
+    const long=dNet-SV,wide=xs-SW,wrongHalf=-xs,m=0.08;
+    out.call=dNet<0?'net':(long>m||wide>m||wrongHalf>m)?'uit':(long>-m&&long<=m)||(wide>-m&&wide<=m)||(wrongHalf>-m&&wrongHalf<=m)?'twijfel':'in';
+    out.depth=-long;// metres in front of the service line (negative = long)
+    out.zone=xs<SW/3?'T':xs<SW*2/3?'lichaam':'wijd';
+    if(long>m)out.fb.push(`Te lang: ${Math.round(long*100)} cm achter de servicelijn. Raak de bal meer van boven en naar voren (pols klapt over de bal), dan duikt hij eerder.`);
+    if(wide>m)out.fb.push(`Naast het vak (${Math.round(wide*100)} cm). Richt met je schouders en de zwaai, niet alleen met de pols.`);
+    if(out.call==='in'&&-long<1.2)out.fb.push('Mooi diep in het vak.');
+    if(out.call==='in'&&-long>2.8)out.fb.push(`Kort (${(-long).toFixed(1).replace('.',',')} m voor de servicelijn): makkelijk aan te vallen. Mik dieper, met meer snelheid of meer spin.`)}
+  if(s.net){const c=s.net.clear;out.netClear=c;
+    if(c<0)out.fb.push('In het net. Raak de bal hoger (helemaal gestrekt) en gooi hem iets verder het veld in.');
+    else if(c<0.15)out.fb.push(`Krap over het net (${Math.round(c*100)} cm). Voor meer marge: meer topspin/kick, of iets hoger mikken.`);
+    else if(c>1.0&&out.call==='uit')out.fb.push(`Ruim over het net (${c.toFixed(1).replace('.',',')} m) maar uit: je raakt hem te veel omhoog. Raak de bal verder naar voren.`)}
+  const C=s.contact;out.z=C[2];
+  if(h>1.2){const ideal=1.31*h+0.5;out.ideal=ideal;
+    if(C[2]<ideal*0.88)out.fb.push(`Raakpunt op ${C[2].toFixed(2).replace('.',',')} m; met jouw lengte kan rond ${ideal.toFixed(1).replace('.',',')} m. Gooi iets hoger op en raak met gestrekte arm op het hoogste punt, niet als de bal al zakt.`)}
+  if(s.feet&&s.how==='3d'){const fwd=(C[1]-s.feet[1])*dir;out.front=fwd;
+    if(fwd<0.1)out.fb.push('Raakpunt boven of achter je hoofd: gooi de bal iets verder naar voren het veld in, zodat je erin kunt leunen.');
+    else if(fwd>1.1)out.fb.push('Raakpunt ver voor je: de opgooi gaat te ver naar voren; je moet erachteraan duiken.')}
+  return out}
 // merge track pieces into one point list (one point per frame; on overlap keep the point of the longer piece)
 function b3Points(flights){const all=[];flights.forEach(f=>{for(const p of f)all.push({t:p.t,x:p.x,y:p.y,len:f.length})});
   all.sort((a,b)=>a.t-b.t||b.len-a.len);const out=[];for(const p of all)if(!out.length||p.t-out[out.length-1].t>0.005)out.push({t:p.t,x:p.x,y:p.y});return out}
@@ -2147,7 +2206,9 @@ function findBounces(path,tmin){
 async function analyzeBall(c,prog){
   const rally=c.label==='punt';
   const tc=rally?c.t0:Number.isFinite(c.tcManual)?c.tcManual:c.ana&&Number.isFinite(c.ana.tc)?c.ana.tc:c.t0+(c.t1-c.t0)*0.55;
-  const ta=rally?c.t0:Math.max(0,tc-0.2),tb=rally?c.t1:Math.min(v.duration,tc+1.8),dt=1/anaFps(),n=Math.max(1,Math.round((tb-ta)/dt));
+  // a serve clip is followed like a short rally (toss + serve + landing), so the 3D serve analysis works on it too
+  const srv=c.label==='service';
+  const ta=rally?c.t0:Math.max(0,tc-(srv?1.3:0.2)),tb=rally?c.t1:Math.min(v.duration,tc+(srv?1.6:1.8)),dt=1/anaFps(),n=Math.max(1,Math.round((tb-ta)/dt));
   const r=ballROI(),scale=Math.min(1,1600/r.w);
   // only look where a ball can be: above the court (+ margin), not on the neighbouring courts
   const chs=courtH(),space=chs&&chs.toImg?ballSpace((X,Y)=>applyH(chs.toImg,X,Y),v.videoWidth,v.videoHeight):null;
@@ -2185,7 +2246,7 @@ async function analyzeBall(c,prog){
   if(window.__ballDbg)window.__ballDbg={r,frames,tracks};// for the test scripts (tools/ball)
   const enc=pts=>pts.map(p=>[+p.t.toFixed(3),+p.x.toFixed(4),+p.y.toFixed(4)]);
   const res={v:6,tc,rally,tracks:[],bounces:[],hits:[],nDet:frames.reduce((a,f)=>a+f.c.length,0)};
-  if(rally){
+  if(rally||srv){
     // physics-linked tracks are already smooth: keep anything moving, drop pieces that mostly lie on a person (legs, racket)
     const fast=tracks.filter(t=>trackStraight(t)>=0.6&&trackSpeed(t)>=0.08&&t.pts.filter(inBox).length<=t.pts.length*0.3);
     const ev=ballEvents(fast,boxesAt,W,H,netY);
@@ -2201,11 +2262,17 @@ async function analyzeBall(c,prog){
     // Falls back to the 2D result above when the camera cannot be derived.
     let r3=null;const cc=state.court;
     try{const cam=cc&&cc.pts&&cc.pts.length===4?ballCamera(cc.pts,cc.k,W,H,courtRefPts(cc.mode)):null;
-      if(cam)r3=rally3d(b3Points(ev.flights),boxesAt,cam,{dt,hints:ev.bounces.concat(ev.hits).map(e=>e.t)})}catch(e){console.warn('3D-bal mislukt',e)}
+      // serve toss: a slow, mostly vertical piece above a player's head (not in `fast`); with it the serve contact is seen
+      const above=p=>boxesAt(p.t).some(b=>{const bw=b.x1-b.x0;return p.x>b.x0-bw*0.6&&p.x<b.x1+bw*0.6&&p.y<b.y0+(b.y1-b.y0)*0.15});
+      const toss=tracks.filter(t=>!fast.includes(t)&&t.pts.length>=5&&t.pts.filter(above).length>=t.pts.length*0.7);
+      if(window.__ballDbg)window.__ballDbg.toss=toss.map(t=>t.pts);
+      if(cam)r3=rally3d(b3Points(ev.flights.concat(toss.map(t=>t.pts))),boxesAt,cam,{dt,hints:ev.bounces.concat(ev.hits).map(e=>e.t)})}catch(e){console.warn('3D-bal mislukt',e)}
     if(r3){res.d3=true;res.curves=r3.curves;res.c3=r3.curves3d;res.cam=r3.cam;
+      const s=r3.serve;if(s){const r2=x=>+x.toFixed(2);res.serve={t:r2(s.t),kmh:Math.round(s.kmh),contact:s.contact.map(r2),how:s.how,feet:s.feet&&s.feet.map(r2),server:s.server,side:s.side,
+        net:s.net&&{X:r2(s.net.X),Z:r2(s.net.Z),clear:r2(s.net.clear)},land:s.land&&{X:r2(s.land.X),Y:r2(s.land.Y),t:r2(s.land.t),pred:!!s.land.pred}}}
       res.bounces=r3.bounces.filter(b=>fin(b.x)&&fin(b.y)).map(b=>{const o=classifyBounce({t:+b.t.toFixed(3),x:+b.x.toFixed(4),y:+b.y.toFixed(4),kmh:Math.round(b.kmh)},dt);if(b.pred)o.pred=true;return o});
       res.hits=r3.hits.filter(h=>fin(h.x)&&fin(h.y)).map(h=>({t:+h.t.toFixed(3),x:+h.x.toFixed(4),y:+h.y.toFixed(4),half:h.half,kmh:Math.round(h.kmh),X:+h.X.toFixed(2),Y:+h.Y.toFixed(2),z:+h.Z.toFixed(2)}))}
-    if(window.__ballDbg)Object.assign(window.__ballDbg,{fast,ev,r3:r3&&{events:r3.events,flights:r3.flights}});
+    if(window.__ballDbg)Object.assign(window.__ballDbg,{fast,ev,r3:r3&&{events:r3.events,flights:r3.flights,serve:r3.serve}});
   }else{
     const path=pickBallTrack(tracks,tc);
     if(path){res.tracks=[enc(path)];const b=findBounces(path,tc+0.15)[0];
@@ -2256,6 +2323,7 @@ function renderBall(){
   const list=visibleClips().filter(c=>c.ball);
   $('#bCourtPng').disabled=!list.some(c=>ballBounces(c.ball).some(b=>fin(b.X)));
   $('#b3d').disabled=!list.some(c=>c.ball.c3&&c.ball.c3.length);
+  renderServe(list);
   drawCourtMap($('#courtMap'),list,false);
   if(!list.length){el.innerHTML='';return}
   let h='<div style="overflow:auto;max-height:30vh"><table class="ana"><tr><th>Clip</th><th title="Gemiddelde snelheid van raken tot stuit">km/u</th><th title="Afstand van het stuitpunt tot de achterlijn">Diepte</th><th>Kant</th><th title="In of uit (enkelspel)">In/uit</th><th title="Aantal beelden waarin de bal gevolgd is">Baan</th></tr>';
@@ -2269,6 +2337,25 @@ function renderBall(){
   el.innerHTML=h+'</table></div><div class="note">'+(sp.length?'Gem. snelheid '+Math.round(sp.reduce((a,b)=>a+b,0)/sp.length)+' km/u · ':'')+(calls.length?calls.filter(x=>x==='in').length+' in, '+calls.filter(x=>x==='uit').length+' uit, '+calls.filter(x=>x==='twijfel').length+' twijfel · ':'')+'Klik op een rij om de clip met balbaan te bekijken.</div>';
 }
 window.__renderBall=renderBall;
+// --- serve analysis (3D): speed, contact height, net clearance, landing in the service box, plain advice (serveJudge) ---
+function playerH(){try{const x=+localStorage.getItem('tcp:height');return x>=120&&x<=230?x/100:0}catch(e){return 0}}
+function renderServe(list){const el=$('#serveBox');if(!el)return;
+  const S=list.filter(c=>c.ball&&c.ball.serve).map(c=>({c,s:c.ball.serve}));if(!S.length){el.innerHTML='';return}
+  const h=playerH(),dm=x=>x.toFixed(2).replace('.',','),d1=x=>x.toFixed(1).replace('.',',');
+  let html='<div style="margin-top:12px;border-top:1px solid #30363d;padding-top:8px"><b>Service</b> <span class="note">· lengte speler <input id="svH" type="number" min="120" max="230" step="1" value="'+(h?Math.round(h*100):'')+'" placeholder="cm" style="width:62px"> cm (voor advies over de raakhoogte)</span>';
+  const J=S.map(({c,s})=>({c,s,j:serveJudge(s,h)}));
+  for(const{c,s,j}of J){const L=LABELS[c.label];
+    const land=s.land?(j.call==='net'?'in het net':j.zone+', '+(j.depth>=0?d1(j.depth)+' m vóór':d1(-j.depth)+' m achter')+' de servicelijn'+(s.land.pred?' (voorspeld)':'')):'landing niet gezien';
+    const call=j.call?' · <b style="color:'+(j.call==='in'?'#4ade80':j.call==='twijfel'?'#fbbf24':'#f87171')+'">'+(j.call==='net'?'net':j.call)+'</b>':'';
+    html+='<div style="margin-top:8px;padding:8px;border:1px solid #30363d;border-radius:8px"><div style="display:flex;gap:8px;align-items:center"><span class="dot" style="background:'+L.color+'"></span><b>'+L.name.replace('Punt','Punt')+' '+numberOf(c)+'</b><span class="note">'+fmt(s.t)+' · '+(s.side==='deuce'?'rechts (deuce)':'links (ad)')+'</span><button class="btn" data-sv3="'+c.id+'" style="margin-left:auto;padding:2px 10px">3D</button></div>'+
+      '<div style="margin-top:4px">'+s.kmh+' km/u · raakpunt '+dm(s.contact[2])+' m'+(j.ideal?' <span class="note">(haalbaar ±'+d1(j.ideal)+')</span>':'')+(s.net?' · net '+(s.net.clear>=0?'+':'')+Math.round(s.net.clear*100)+' cm':'')+' · '+land+call+'</div>'+
+      (j.fb.length?'<ul style="margin:6px 0 0 18px;padding:0">'+j.fb.map(t=>'<li>'+t+'</li>').join('')+'</ul>':'<div class="note" style="margin-top:4px">Geen verbeterpunt gevonden in deze service.</div>')+'</div>'}
+  if(J.length>1){const av=a=>a.reduce((x,y)=>x+y,0)/a.length,nets=J.filter(x=>x.s.net).map(x=>x.s.net.clear),ins=J.filter(x=>x.j.call);
+    html+='<div class="note" style="margin-top:6px">Gemiddeld: '+Math.round(av(J.map(x=>x.s.kmh)))+' km/u · raakpunt '+dm(av(J.map(x=>x.s.contact[2])))+' m'+(nets.length?' · net +'+Math.round(av(nets)*100)+' cm':'')+(ins.length?' · '+ins.filter(x=>x.j.call==='in').length+' van '+ins.length+' in':'')+'</div>'}
+  el.innerHTML=html+'<div class="note" style="margin-top:6px">Gemeten in 3D uit de baankalibratie. Raakpunt: uit de laatste plek van de opgooi in beeld en de stand van je voeten (±0,1–0,2 m). Landing aan de overkant: ±0,3 m.</div></div>';
+  const inp=el.querySelector('#svH');inp.onchange=()=>{try{localStorage.setItem('tcp:height',inp.value)}catch(e){}renderBall()}}
+$('#serveBox').addEventListener('click',e=>{const b=e.target.closest('[data-sv3]');if(!b)return;const c=getClip(b.dataset.sv3);if(!c||!c.ball.serve)return;
+  state.sel=c.id;v.pause();v.currentTime=Math.max(0,c.ball.serve.t-0.7);v3Open();v3View('zij')});
 $('#ballTable').addEventListener('click',e=>{const tr=e.target.closest('tr.row');if(!tr)return;const c=getClip(tr.dataset.id);if(!c)return;state.sel=c.id;v.pause();render();
   previewClip(c.label==='punt'?c:{t0:Math.max(0,c.ball.tc-0.2),t1:Math.min(v.duration,c.ball.tc+1.8)})});
 $('#bCourtPng').onclick=()=>{const cv=document.createElement('canvas');const list=visibleClips().filter(c=>c.ball);drawCourtMap(cv,list,true);cv.toBlob(b=>offerFile(b,base()+'_stuitpunten.png'),'image/png')};
@@ -2340,6 +2427,18 @@ function v3Draw(){
   for(const s of ballBounces(b)){if(!fin(s.X)||!fin(s.Y))continue;const done=s.t<=now+1e-3,col=s.call==='uit'?'248,113,113':s.call==='in'?'74,222,128':'251,191,36';
     const ring=[];for(let i=0;i<=20;i++){const a=i/20*Math.PI*2;ring.push([s.X+0.3*Math.cos(a),s.Y+0.3*Math.sin(a),0.005])}
     poly(ring,done?'rgba('+col+',.35)':null,'rgba('+col+','+(done?1:.35)+')',2,s.pred?[4,3]:null)}
+  // serve: the target box, the contact point and the height over the net
+  const sv=b.serve;
+  if(sv){const near=sv.server==='dichtbij',sx=sv.side==='deuce'?(near?1:-1):(near?-1:1),x0=sx>0?-SHW:0,x1=sx>0?0:SHW,y0=near?NET:NET-6.4,y1=near?NET+6.4:NET;
+    poly([[x0,y0,0.004],[x1,y0,0.004],[x1,y1,0.004],[x0,y1,0.004]],'rgba(96,165,250,.18)','rgba(96,165,250,.6)',1.5);
+    ctx.font=12*dpr+'px system-ui';
+    const lab=(q,tx,col)=>{const tw=ctx.measureText(tx).width;ctx.fillStyle='rgba(13,17,23,.8)';ctx.fillRect(q[0]+9*dpr,q[1]-20*dpr,tw+10*dpr,17*dpr);ctx.fillStyle=col;ctx.fillText(tx,q[0]+14*dpr,q[1]-7*dpr)};
+    const C=sv.contact,qc=P(C[0],C[1],C[2]),gc=P(C[0],C[1],0);
+    if(qc){if(gc){ctx.strokeStyle='rgba(103,232,249,.6)';ctx.lineWidth=1*dpr;ctx.setLineDash([3*dpr,3*dpr]);ctx.beginPath();ctx.moveTo(qc[0],qc[1]);ctx.lineTo(gc[0],gc[1]);ctx.stroke();ctx.setLineDash([])}
+      ctx.fillStyle='#67e8f9';ctx.beginPath();ctx.arc(qc[0],qc[1],5*dpr,0,7);ctx.fill();lab(qc,'raakpunt '+C[2].toFixed(2).replace('.',',')+' m · '+sv.kmh+' km/u','#67e8f9')}
+    if(sv.net){const qn=P(sv.net.X,NET,sv.net.Z),qt=P(sv.net.X,NET,sv.net.Z-sv.net.clear);
+      if(qn){if(qt){ctx.strokeStyle='#67e8f9';ctx.lineWidth=2*dpr;ctx.beginPath();ctx.moveTo(qn[0],qn[1]);ctx.lineTo(qt[0],qt[1]);ctx.stroke()}
+        ctx.fillStyle='#67e8f9';ctx.beginPath();ctx.arc(qn[0],qn[1],4*dpr,0,7);ctx.fill();lab(qn,'net '+(sv.net.clear>=0?'+':'')+Math.round(sv.net.clear*100)+' cm','#67e8f9')}}}
   // flights: shadow on the ground (shows the height), the whole rally faint, up to "now" bright
   for(const cu of b.c3){
     poly(cu.map(q=>[q[1],q[2],0.01]),null,'rgba(0,0,0,.45)',2);

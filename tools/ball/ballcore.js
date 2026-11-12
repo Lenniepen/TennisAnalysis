@@ -13,11 +13,13 @@ function ballSpace(toImg,VW,VH){const M=2.5,HW=5.485,L=23.77;
   const side=(a,b,x,y)=>(b[0]-a[0])*(y-a[1])-(b[1]-a[1])*(x-a[0]);// sign: left/right of line a->b
   const sl=Math.sign(side(nl,fl,nr[0],nr[1])),sr=Math.sign(side(nr,fr,nl[0],nl[1])),sn=Math.sign(side(nl,nr,fl[0],fl[1]));
   const topY=Math.min(fl[1],fr[1]);
+  // a high ball close to the camera (the serve toss, a lob over the near player) also shows up above the far end, but
+  // wider: allow up to the near baseline corners there
+  const c0=toImg(-HW,0),c1=toImg(HW,0),ux0=Math.min(fl[0],c0&&isFinite(c0[0])?c0[0]:fl[0])-0.03*VW,ux1=Math.max(fr[0],c1&&isFinite(c1[0])?c1[0]:fr[0])+0.03*VW;
   return(x,y)=>{
     if(side(nl,nr,x,y)*sn<0)return false;// in front of the near margin (closer to the camera)
     if(y>=topY)return side(nl,fl,x,y)*sl>=0&&side(nr,fr,x,y)*sr>=0;// ground area: between the (extended) sidelines
-    // above the far end: straight up from the far margin
-    return x>=fl[0]-0.02*VW&&x<=fr[0]+0.02*VW}}
+    return x>=ux0&&x<=ux1}}
 // candidates in the middle frame: pixels that differ from BOTH neighbours (the object is here now, not before/after)
 // noIso: skip the isolation test (near the hand at the moment of contact the ball touches the racket)
 // prev2/next2 (optional, 2 frames away): a slow ball (top of a lob) moves less than its own width per frame and

@@ -14,5 +14,8 @@ console.log('vluchten:');for(const f of r.flights)console.log(`  ${f.t0.toFixed(
 console.log('gebeurtenissen:');for(const e of r.events)console.log(`  ${e.t.toFixed(2)} ${e.type}${e.pre?' (vóór service)':''} ${e.P?e.P.join(' '):''}`);
 console.log('STUITEN:',r.bounces.map(b=>`${b.t.toFixed(2)}${b.pred?'(voorspeld)':''}@Y${b.Y.toFixed(1)}`).join('  '));
 console.log('SLAGEN :',r.hits.map(h=>`${h.t.toFixed(2)}/${h.half} Z${h.Z.toFixed(2)} ${h.kmh.toFixed(0)}km/u`).join('  '));
+{const{serveJudge}=require('./ball3d.js'),s=r.serve;if(s){const j=serveJudge(s,1.8);
+  console.log(`SERVICE: t ${s.t.toFixed(2)} door ${s.server} (${s.side}), ${s.kmh.toFixed(0)} km/u, raakpunt X${s.contact[0].toFixed(2)} Y${s.contact[1].toFixed(2)} Z${s.contact[2].toFixed(2)}, voeten ${s.feet?s.feet.map(x=>x.toFixed(2)).join(','):'?'}, net ${s.net?s.net.clear.toFixed(2)+' m marge':'?'}, landing ${s.land?s.land.X.toFixed(2)+','+s.land.Y.toFixed(2)+(s.land.pred?' (voorspeld)':''):'?'}`);
+  console.log('  oordeel:',j.call,j.zone,'diepte',j.depth&&j.depth.toFixed(2),'\n  -',j.fb.join('\n  - '))}else console.log('SERVICE: niet gevonden')}
 if(process.env.DIAG)for(const t of[6.68,9.0,9.8,14.28,14.8,17.4,18.84,19.28,20.24])console.log('diag',t,JSON.stringify(r.diag(t)));
 console.log('verwacht (jouw feedback): stuiten 6.68 9.00 14.28 17.40 18.84 20.24 | slagen 9.80 14.80 19.28');
