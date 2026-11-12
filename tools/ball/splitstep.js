@@ -6,7 +6,8 @@
 // Rule of thumb: land ~0.15-0.25 s after the opponent's contact (2minuteTennis: 0.2 s; Aviles et al.: take-off -0.04 s,
 // landing +0.16 s; Uzu et al. 2009: best landing ~0.18 s after the signal).
 // frames: [{t,P}] with P = 33 MediaPipe landmarks {x,y,v} in 0..1; W,H = video size; hits: opponent contact times.
-const SS={MOVE:0.06,STILL:0.075,MINF:2,MINSC:0.25,HEEL:0.06,BEND:0.15,GAP:0.13,W0:-0.35,W1:0.6,NORM:[0.12,0.28]};
+// W0/W1: landing window around the opponent contact; later than +0.45 s is a step towards the ball, not a split-step (punt 3, 20.29)
+const SS={MOVE:0.06,STILL:0.075,MINF:2,MINSC:0.25,HEEL:0.06,BEND:0.15,GAP:0.13,W0:-0.35,W1:0.45,NORM:[0.12,0.28]};
 function ssMotion(frames,W,H){
   const ok=(P,...i)=>i.every(k=>P[k]&&(P[k].v==null||P[k].v>=0.4));
   const F=frames.filter(f=>f.P&&ok(f.P,11,12,23,24,27,28)),out=[];
