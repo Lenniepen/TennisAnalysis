@@ -2,7 +2,9 @@
 // Works on a fast, coarse scan (frames as the video plays, irregular spacing), so everything uses real timestamps.
 // A rally = a series of ball flights over the court, each starting at most `maxGap` s after the previous one ended,
 // with at least `minShots` flights. Points, serves and in/out do not matter: in a lesson you often just keep playing.
-const RALLYP={minShots:3,maxGap:2.5,pre:1.0,post:1.2,minTravel:0.07,minDur:0.15};
+// maxGap 2.8 s: a high lob + bounce + the next hit, with the far-side ball partly unseen, takes ~2.6 s (punt 3); a real
+// break between rallies (fetching balls, walking) was 3.0 s or more in the test video
+const RALLYP={minShots:3,maxGap:2.8,pre:1.0,post:1.2,minTravel:0.07,minDur:0.15};
 // frames: [{t, c:[{x,y}]}] (normalised image coords) -> tracks [{pts:[{t,x,y}]}]
 function rallyTracks(frames,W,H){
   const F=frames.map(f=>({t:f.t,c:f.c.map(c=>({x:c.x*W,y:c.y*H,nx:c.x,ny:c.y,used:false}))}));
@@ -24,8 +26,24 @@ function rallyTracks(frames,W,H){
   return tracks.sort((a,b)=>a.pts[0].t-b.pts[0].t)}
 // tracks -> flights (long enough moves over the court) -> rallies [{t0,t1,shots,flights}]
 function rallySegments(tracks,opt){const P={...RALLYP,...(opt||{})};
+  // first chain the pieces of one flight: a ball on the far side moves slowly in the image and its track breaks into
+  // pieces of ~0.5 s that each travel too little on their own (DJI_0094 at 14:00, 66.4-68.1 s: punt 3 was cut in two).
+  // A piece continues a chain when it starts at most 0.6 s later, near where the chain was heading, in the same direction.
+  const T=tracks.map(tr=>tr.pts).filter(p=>p.length>=2).sort((a,b)=>a[0].t-b[0].t),chains=[];
+  const vel=p=>{const a=p[Math.max(0,p.length-4)],b=p[p.length-1],d=b.t-a.t||1e-3;return[(b.x-a.x)/d,(b.y-a.y)/d]};
+  // only ball-like pieces chain (straight, moving): a slow, jittery track on a player must not swallow a ball piece
+  const ballish=p=>{const a=p[0],b=p[p.length-1],d=b.t-a.t;if(d<=0)return false;let tr=0;for(let i=1;i<p.length;i++)tr+=Math.hypot(p[i].x-p[i-1].x,p[i].y-p[i-1].y);
+    return tr>0&&Math.hypot(b.x-a.x,b.y-a.y)>=0.6*tr&&tr/d>=0.06};
+  for(const p of T){let best=null,bd=1e9;const ok=ballish(p);
+    for(const c of chains){if(!ok||!c.ball)continue;const e=c[c.length-1],gap=p[0].t-e.t;if(gap<-0.05||gap>0.6)continue;
+      const v=vel(c),px=e.x+v[0]*gap,py=e.y+v[1]*gap,d=Math.hypot(p[0].x-px,p[0].y-py),sp=Math.hypot(...v);
+      // same direction, also vertically: the shot count below counts up/down changes in the image, chaining over the top
+      // of a lob would hide one (outdoor 0.2-11.8 s lost a rally that way)
+      const q=p[p.length-1],dir=(q.x-p[0].x)*v[0]+(q.y-p[0].y)*v[1],c0=c[0],vsame=Math.sign(q.y-p[0].y)===Math.sign(e.y-c0.y);
+      if(d<=Math.max(0.03,0.6*sp*Math.max(gap,0.04))&&dir>0&&vsame&&d<bd){bd=d;best=c}}
+    if(best){for(const x of p)if(x.t>best[best.length-1].t)best.push(x)}else{const c=p.slice();c.ball=ok;chains.push(c)}}
   const fl=[];
-  for(const tr of tracks){const p=tr.pts,a=p[0],b=p[p.length-1],dur=b.t-a.t;if(dur<P.minDur)continue;
+  for(const p of chains){const a=p[0],b=p[p.length-1],dur=b.t-a.t;if(dur<P.minDur)continue;
     let travel=0;for(let i=1;i<p.length;i++)travel+=Math.hypot(p[i].x-p[i-1].x,p[i].y-p[i-1].y);
     if(travel<P.minTravel)continue;
     // straight-ish: net displacement at least half of the path (no jitter on a player)

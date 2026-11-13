@@ -22,10 +22,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   await send('DOM.setFileInputFiles',{nodeId:q.result.nodeId,files:[path.resolve(vid)]});
   for(let i=0;i<80;i++){await sleep(250);if(/automatisch gekalibreerd|niet gevonden/.test(await toast()))break}
   console.log('kalibratie:',await toast());
-  await ev(`document.querySelector('#rRate').value='${rate}';document.querySelector('#rMin').value='${minShots}';window.__rallyDbg=true;1`);
+  await ev(`document.querySelector('#rRate').value='${rate}';document.querySelector('#rMin').value='${minShots}';window.__rallyDbg=true;window.__F0=${process.env.F0||0};window.__F1=${process.env.F1||0};1`);
   const t0=Date.now();await ev("document.querySelector('#bRally').click();1");
   for(let i=0;i<2400;i++){await sleep(500);const t=await toast();if(/rally’s toegevoegd|Geen rally|mislukt|geannuleerd/.test(t)){console.log('na',((Date.now()-t0)/1000).toFixed(0)+'s:',t);break}}
-  console.log('debug:',JSON.stringify(await ev("(()=>{const d=window.__rallyDbg;return d===true?null:{frames:d.frames,tracks:d.tracks,rates:(d.rates||[]).join(' ')}})()")));
+  console.log('debug:',JSON.stringify(await ev("(()=>{const d=window.__rallyDbg;return d===true?null:{frames:d.frames,tracks:d.tracks,rates:(d.rates||[]).join(' '),fl:(d.fl||[]).filter(f=>f[1]>+(window.__F0||0)&&f[0]<+(window.__F1||0))}})()")));
   const clips=await ev(`(()=>{const k=Object.keys(localStorage).find(k=>k.startsWith('tcp:clips:'));if(!k)return null;return JSON.parse(localStorage.getItem(k)).clips.map(c=>c.t0.toFixed(1)+'-'+c.t1.toFixed(1)+' ('+c.shots+')')})()`);
   console.log('rally-clips:',JSON.stringify(clips));
   console.log(logs.slice(0,10).join('\n')||'geen fouten in console');
