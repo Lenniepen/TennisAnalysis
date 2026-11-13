@@ -50,8 +50,11 @@ function splitSteps(frames,W,H,hits){
   return hits.map(th=>{
     const near=S.filter(s=>s.t>th-0.6&&s.t<th+0.7);if(near.length<10)return{t:th,ok:false,why:'speler niet goed in beeld'};
     const inW=c=>c.land>=th+SS.W0&&c.land<=th+SS.W1;
-    // heels first (clearest), otherwise both feet moving and then standing still
-    const c=heels.filter(inW).sort((a,b)=>b.score-a.score)[0]||cands.filter(inW).sort((a,b)=>b.score-a.score)[0];
+    // heels first (clearest), otherwise both feet moving and then standing still. Of several, the last one that is at least
+    // 60% as strong as the strongest: the split-step is the last stance before moving to the ball, earlier ones are steps
+    // (punt 3 at 14.76: a step at -0.16 was a hair stronger than the late split-step at +0.36 the user saw)
+    const pick=L=>{if(!L.length)return null;const mx=Math.max(...L.map(x=>x.score));return L.filter(x=>x.score>=0.6*mx).sort((a,b)=>b.land-a.land)[0]};
+    const c=pick(heels.filter(inW))||pick(cands.filter(inW));
     if(!c)return{t:th,ok:false,why:'geen split-step gezien'};
     // take-off: the both-feet phase that ends at this landing, if there is one
     const mv=cands.find(m=>Math.abs(m.land-c.land)<0.12);if(c.how==='hak')c.off=mv?mv.off:null;

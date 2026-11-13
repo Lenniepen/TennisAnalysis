@@ -26,7 +26,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   for(let i=0;i<80;i++){await sleep(250);if(/automatisch gekalibreerd|niet gevonden/.test(await toast()))break}
   console.log('kalibratie:',await toast());
   const t0=Date.now();
-  const res=await ev(`(async()=>{const Q=window.__pose;await Q.loadPose();const fr=await Q.scanFrames(null,${+T0},${+T1},null,${process.env.TGT?JSON.stringify((([x,y,h])=>({x,y,h}))(process.env.TGT.split(",").map(Number))):"null"});
+  const res=await ev(`(async()=>{const Q=window.__pose;await Q.loadPose();if(!window.__noFps)await Q.ensureFps();const fr=await Q.scanFrames(null,${+T0},${+T1},null,${process.env.TGT?JSON.stringify((([x,y,h])=>({x,y,h}))(process.env.TGT.split(",").map(Number))):"null"});
     const r=x=>+x.toFixed(4);const vv=document.querySelector("video");return JSON.stringify({W:vv.videoWidth,H:vv.videoHeight,frames:fr.map(f=>({t:+f.t.toFixed(3),P:f.P?f.P.map(p=>[r(p.x),r(p.y),+(p.v||0).toFixed(2)]):null}))})})()`);
   if(typeof res==='string'){fs.writeFileSync(path.join(outDir,'pose.json'),res);const D=JSON.parse(res);console.log('pose: beelden',D.frames.length,'met skelet',D.frames.filter(f=>f.P).length,'in',((Date.now()-t0)/1000).toFixed(0)+'s')}
   else console.log("fout",JSON.stringify(res.result||res).slice(0,800));

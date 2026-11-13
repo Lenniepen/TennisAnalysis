@@ -28,7 +28,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   await seekTo(+T0);await key('i');await seekTo(+T1);await key('r');await sleep(300);
   console.log('clip:',await toast());
   await ev("[...document.querySelectorAll('button,[data-tab]')].find(b=>/^\\s*Bal\\s*$/.test(b.textContent)).click();1");await sleep(300);
-  await ev("window.__ballDbg=true;1");
+  await ev("window.__ballDbg=true;"+(process.env.PPL?"window.__pplEvery="+process.env.PPL+";":"")+"1");
   const t0=Date.now();await ev("document.querySelector('#bBall').click();1");
   for(let i=0;i<1200;i++){await sleep(500);const t=await toast();if(/Bal gevolgd|mislukt|niet geladen/.test(t)&&!/Bal volgen in/.test(t)){console.log('na',((Date.now()-t0)/1000).toFixed(0)+'s:',t);if(/Bal gevolgd/.test(t))break}}
   const dbg=await ev(`(()=>{const d=window.__ballDbg;if(!d||d===true)return null;const r4=x=>+x.toFixed(4);
@@ -53,6 +53,8 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   if(process.env.V3){// 3D viewer screenshots
     await seekTo(+process.env.V3);await ev("document.querySelector('#b3d').click();1");await sleep(800);
     for(const vw of['schuin','camera','zij']){await ev(`document.querySelector('[data-v3=${vw}]').click();1`);await sleep(500);const sh=await send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(outDir,'v3_'+vw+'.png'),Buffer.from(sh.result.data,'base64'))}}
+  console.log('tijd per stap:',await ev("JSON.stringify(window.__ballProf?Object.fromEntries(Object.entries(window.__ballProf).map(([k,x])=>[k,typeof x==='number'?Math.round(x):x])):null)"));
+  {const ss=await ev('JSON.stringify(window.__ssFr||null)');if(ss&&ss!=='null')fs.writeFileSync(path.join(outDir,'ss.json'),ss)}
   console.log('split-step:',(await ev("(document.querySelector('#splitBox')||{}).innerText||''")).replace(/\s+/g,' '));
   console.log(logs.filter(l=>/EXC|error/i.test(l)).slice(0,10).join('\n')||'geen fouten in console');
   ws.close();cp.kill();srv.close();setTimeout(()=>process.exit(0),500);

@@ -290,7 +290,7 @@ details.info{margin-top:10px}details.info summary{cursor:pointer;color:var(--mut
     <div class="set">
       <label for="pre">Tijd vóór raakmoment (s)</label><input type="number" id="pre" step="0.25" min="0" value="1.5">
       <label for="post">Tijd na raakmoment (s)</label><input type="number" id="post" step="0.25" min="0" value="1.25">
-      <label for="srcFps">FPS bron (wordt herkend bij afspelen)</label><input type="number" id="srcFps" step="1" min="1" value="60">
+      <label for="srcFps">FPS bron (wordt herkend bij afspelen)</label><input type="number" id="srcFps" step="any" min="1" value="60">
     </div>
     <h3>Werkwijze</h3>
     <ol class="steps">
@@ -418,8 +418,20 @@ function loadFile(f){
 }
 v.addEventListener('loadedmetadata',()=>{stage.style.setProperty('--ar',(v.videoWidth/v.videoHeight).toFixed(4));$('#empty').style.display='none';render()});
 /* auto-detect source framerate from presented frames while playing */
-let fpsToken=0;
+let fpsToken=0,fpsKnown=false;
+const FPS_STD=[23.976,24,25,29.97,30,48,50,59.94,60,90,100,120,240];
+const fpsSnap=raw=>FPS_STD.reduce((b,c)=>Math.abs(c-raw)<Math.abs(b-raw)?c:b,30);
+// measure the frame rate before an analysis: play ~0.5 s muted and read the frame times (the analysis then visits every
+// frame exactly once instead of seeking at 60 Hz and checking pixels for duplicates)
+async function ensureFps(){if(fpsKnown||!hasVideo()||!('requestVideoFrameCallback' in HTMLVideoElement.prototype))return;
+  const t0=v.currentTime,mu=v.muted,rate=v.playbackRate,d=[];let last=null;v.muted=true;v.playbackRate=1;
+  await new Promise(res=>{let done=false;const end=()=>{if(done)return;done=true;res()};
+    const cb=(now,meta)=>{if(done)return;if(last!=null){const x=meta.mediaTime-last;if(x>0.003&&x<0.25)d.push(x)}last=meta.mediaTime;if(d.length>=14)end();else v.requestVideoFrameCallback(cb)};
+    v.requestVideoFrameCallback(cb);v.play().catch(end);setTimeout(end,3000)});
+  v.pause();v.muted=mu;v.playbackRate=rate;await seek(t0);
+  if(d.length>=6){d.sort((a,b)=>a-b);const fps=fpsSnap(1/d[Math.floor(d.length*0.3)]);$('#srcFps').value=fps;saveSettings();fpsKnown=true}}
 v.addEventListener('loadedmetadata',()=>{
+  fpsKnown=false;
   if(!('requestVideoFrameCallback' in HTMLVideoElement.prototype))return;
   const tok=++fpsToken;let last=null;const d=[];
   const cb=(now,meta)=>{
@@ -427,9 +439,9 @@ v.addEventListener('loadedmetadata',()=>{
     if(!v.paused&&!state.exporting&&last!=null){const x=meta.mediaTime-last;if(x>0.003&&x<0.25)d.push(x)}
     last=v.paused?null:meta.mediaTime;
     if(d.length>=30){d.sort((a,b)=>a-b);const raw=1/d[Math.floor(d.length*0.3)];
-      const fps=[24,25,30,48,50,60,90,100,120,240].reduce((b,c)=>Math.abs(c-raw)<Math.abs(b-raw)?c:b,30);
-      const cur=Math.round(num('#srcFps'));
-      if(fps!==cur){$('#srcFps').value=fps;saveSettings();toast('Framerate van deze video herkend: '+fps+' fps (frame-stap en analyse aangepast)',4500)}
+      const fps=fpsSnap(raw);fpsKnown=true;
+      const cur=num('#srcFps');
+      if(Math.abs(fps-cur)>0.01){$('#srcFps').value=fps;saveSettings();toast('Framerate van deze video herkend: '+fps+' fps (frame-stap en analyse aangepast)',4500)}
       return}
     v.requestVideoFrameCallback(cb);
   };
@@ -1153,13 +1165,17 @@ function fpDiff(a,b){let s=0;for(let i=0;i<a.length;i+=4)s+=Math.abs(a[i]-b[i])+
 async function scanFrames(crop,ta,tb,prog,target){
   const dt=1/anaFps(),out=[];const n=Math.max(1,Math.round((tb-ta)/dt));let prevFp=null;
   const tr=!crop&&target?{last:{x:target.x,y:target.y,h:target.h},app:target.app||null}:null;
+  // known frame rate (measured, see ensureFps): the middle of every frame exactly once, on an even time grid; otherwise seek
+  // finely and skip repeated frames by their pixels. (The frame times Chrome reports via requestVideoFrameCallback were tried
+  // and are not reliable here: jitter, a 4 s error at key frames, stale times.)
+  const exact=fpsKnown,f0=Math.floor(ta*anaFps()+1e-6);
   for(let i=0;i<=n;i++){
     if(state.cancel)return null;
-    const t=Math.min(tb,ta+i*dt);await seek(t);
-    const fp=frameFingerprint();
-    if(prevFp&&fp&&fpDiff(fp,prevFp)<0.05){if(prog)prog(i/n);continue}
-    prevFp=fp;
-    out.push({t:v.currentTime,P:detectFor(crop,tr)});
+    const t=exact?(f0+i+0.5)*dt:Math.min(tb,ta+i*dt);await seek(t);
+    if(!exact){const fp=frameFingerprint();
+      if(prevFp&&fp&&fpDiff(fp,prevFp)<0.05){if(prog)prog(i/n);continue}
+      prevFp=fp}
+    out.push({t:exact?t:v.currentTime,P:detectFor(crop,tr)});
     if(prog)prog(i/n);
   }
   return out;
@@ -1390,7 +1406,7 @@ function renderAna(){
     h+='<tr class="avg"><td>gem. '+LABELS[k].name.slice(0,2)+' ('+g.length+')</td><td></td>'+COLS.map(col=>{const x=avgOf(g,col[3]);return'<td>'+(col[4]?col[4](x):r0(x)+(col[2]({[col[3]]:0}).includes('%')?'%':'°'))+'</td>'}).join('')+'</tr>'}
   el.innerHTML=h+'</table></div><div class="note">* = raakmoment handmatig gezet · <span style="color:#fde047">•</span> = automatisch bepaald met de bal. Beweeg over een kolomkop voor uitleg. Draai/scheiding zijn ruwe schattingen uit de schijnbare breedte van schouders en heupen.</div>';
 }
-window.__renderAna=renderAna;window.__renderPick=renderPick;window.__pose={loadPose,scanFrames,detectFor};// debug/test hook (tools/ball/e2e_pose.js)
+window.__renderAna=renderAna;window.__renderPick=renderPick;window.__pose={loadPose,scanFrames,detectFor,ensureFps};// debug/test hook (tools/ball/e2e_pose.js)
 $('#anaTable').addEventListener('click',e=>{const tr=e.target.closest('tr.row');if(!tr)return;const c=getClip(tr.dataset.id);if(!c)return;state.sel=c.id;v.pause();seekTo(c.ana.tc);render()});
 
 /* analysis sheet (png) */
@@ -2392,8 +2408,11 @@ function splitSteps(frames,W,H,hits){
   return hits.map(th=>{
     const near=S.filter(s=>s.t>th-0.6&&s.t<th+0.7);if(near.length<10)return{t:th,ok:false,why:'speler niet goed in beeld'};
     const inW=c=>c.land>=th+SS.W0&&c.land<=th+SS.W1;
-    // heels first (clearest), otherwise both feet moving and then standing still
-    const c=heels.filter(inW).sort((a,b)=>b.score-a.score)[0]||cands.filter(inW).sort((a,b)=>b.score-a.score)[0];
+    // heels first (clearest), otherwise both feet moving and then standing still. Of several, the last one that is at least
+    // 60% as strong as the strongest: the split-step is the last stance before moving to the ball, earlier ones are steps
+    // (punt 3 at 14.76: a step at -0.16 was a hair stronger than the late split-step at +0.36 the user saw)
+    const pick=L=>{if(!L.length)return null;const mx=Math.max(...L.map(x=>x.score));return L.filter(x=>x.score>=0.6*mx).sort((a,b)=>b.land-a.land)[0]};
+    const c=pick(heels.filter(inW))||pick(cands.filter(inW));
     if(!c)return{t:th,ok:false,why:'geen split-step gezien'};
     // take-off: the both-feet phase that ends at this landing, if there is one
     const mv=cands.find(m=>Math.abs(m.land-c.land)<0.12);if(c.how==='hak')c.off=mv?mv.off:null;
@@ -2474,25 +2493,40 @@ async function analyzeBall(c,prog){
     const mh=(y1-y0)*0.12,mw=mh*v.videoHeight/v.videoWidth;return{x0:x0-mw*1.5,x1:x1+mw*1.5,y0:y0-mh*1.5,y1:y1+mh*1.6}};
   if(lm0&&!rally)boxes=[bodyBox(lm0)];
   const outside=b=>boxes.every(bx=>b.x<bx.x0||b.x>bx.x1||b.y<bx.y0||b.y>bx.y1);
-  for(let i=0;i<=n;i++){if(state.cancel)return false;await seek(ta+i*dt);const fp=frameFingerprint();
-    if(prevFp&&fp&&fpDiff(fp,prevFp)<0.05){prog(i/n);continue}prevFp=fp;
-    // people boxes every frame (players move fast; a stale box lets a leg or racket through as "ball")
-    {k2++;const nb=[];
+  // time per step (window.__ballDbg.prof, for tools/ball/e2e_ball.js)
+  const PF={seek:0,fp:0,people:0,pose:0,prep:0,nn:0,frames:0,seeks:0,t0:performance.now()},now=()=>performance.now();
+  // known frame rate (measured, see ensureFps): the middle of every frame exactly once, on an even time grid (no pixel check
+  // for repeated frames needed)
+  const exact=fpsKnown,f0=Math.floor(ta*anaFps()+1e-6),m=n;let mt=null;
+  let pend=null;// AI model: the run for frame k goes on while the next frame is being decoded
+  const nnDone=async()=>{if(!pend)return;const q=now(),{k,p}=pend;pend=null;const d=await p;PF.nn+=now()-q;
+    raw[k].c=d.filter(b=>{const sp=space3||space;return !sp||sp(b.x*v.videoWidth,b.y*v.videoHeight)}).map(b=>({x:b.x,y:b.y,a:9,yel:20,sc:b.s}));raw[k].w=[]};
+  for(let i=0;i<=m;i++){if(state.cancel)return false;let q=now();mt=null;
+    if(exact){mt=(f0+i+0.5)*dt;await seek(mt);PF.seek+=now()-q;PF.seeks++}
+    else{await seek(ta+i*dt);PF.seek+=now()-q;PF.seeks++;q=now();const fp=frameFingerprint();PF.fp+=now()-q;if(prevFp&&fp&&fpDiff(fp,prevFp)<0.05){prog(i/m);continue}prevFp=fp}
+    PF.frames++;
+    // people boxes every frame for the old detector (a stale box lets a leg or racket through as "ball"); the AI model
+    // does not need that, there every second frame is enough (the boxes are for hits and feet)
+    if(!useNN||(window.__pplEvery||2)===1||PF.frames%2===1||!boxes.length){k2++;const nb=[];q=now();
       if(POSE.det)for(const b of detectPeopleBoxes()){const mx=(b.x1-b.x0)*0.15,bh=b.y1-b.y0;nb.push({x0:b.x0-mx,x1:b.x1+mx,y0:b.y0-bh*0.08,y1:b.y1+bh*0.1})}// everyone on court, incl. far side
       else if(POSE.lmImg)for(const P of detectAll(true))nb.push(bodyBox(P));
+      PF.people+=now()-q;q=now();
       if(tr||c.crop){const P=detectFor(c.crop,tr);if(P)nb.push(bodyBox(P))}
+      PF.pose+=now()-q;
       if(nb.length||!(POSE.lmImg||POSE.det))boxes=nb}
-    raw.push({t:v.currentTime,g:useNN?null:grabFrame(r,scale),nn:useNN?ballNNPrep(v,nnCrop):null,boxes});
+    q=now();raw.push({t:mt!=null?mt:v.currentTime,g:useNN?null:grabFrame(r,scale),nn:useNN?ballNNPrep(v,nnCrop):null,boxes});PF.prep+=now()-q;
     if(useNN){// AI model: 3 frames in, the ball in the middle one. No person-box filter: the model knows a ball from a racket,
       // and the ball right at the racket (the contact) is exactly what we want to see
-      if(raw.length>=3){const k=raw.length-2,d=await ballNNRun(raw[k-1].nn,raw[k].nn,raw[k+1].nn,nnCrop,v.videoWidth,v.videoHeight);
-        raw[k].c=d.filter(b=>{const sp=space3||space;return !sp||sp(b.x*v.videoWidth,b.y*v.videoHeight)}).map(b=>({x:b.x,y:b.y,a:9,yel:20,sc:b.s}));raw[k].w=[]}
+      // (ballNNRun copies its three inputs before it awaits, so they may be freed right after the call)
+      if(raw.length>=3){await nnDone();const k=raw.length-2;pend={k,p:ballNNRun(raw[k-1].nn,raw[k].nn,raw[k+1].nn,nnCrop,v.videoWidth,v.videoHeight)}}
       if(raw.length>3)raw[raw.length-4].nn=null}
     else{// 5-frame window: compare with 1 and 2 frames away (a slow ball at the top of a lob stays visible)
       if(raw.length>=5){const k=raw.length-3,bl=raw[k].boxes,out=b=>bl.every(bx=>b.x<bx.x0||b.x>bx.x1||b.y<bx.y0||b.y>bx.y1);
         const bb=blobsFrom(raw[k-1].g,raw[k].g,raw[k+1].g,r,scale,v.videoWidth,v.videoHeight,space,false,raw[k-2].g,raw[k+2].g);raw[k].c=bb.s.filter(out);raw[k].w=bb.w.filter(out)}
       if(raw.length>5)raw[raw.length-6].g=null}
-    prog(i/n)}
+    prog(i/m)}
+  await nnDone();
+  PF.total=now()-PF.t0;PF.ep=useNN?BNN.ep:'motion';PF.exact=exact;PF.fps=anaFps();window.__ballProf=PF;
   const frames=raw.filter(f=>f.c).map(f=>({t:f.t,c:f.c,w:f.w,boxes:f.boxes}));
   const W=v.videoWidth,H=v.videoHeight,tracks=linkTracks(frames,W,H);
   const boxesAt=t=>{let b=null,bd=1;for(const f of frames){const d=Math.abs(f.t-t);if(d<bd){bd=d;b=f.boxes}}return b||[]};
@@ -2544,6 +2578,7 @@ async function analyzeBall(c,prog){
           if(!best)continue;
           const part=await scanFrames(null,Math.max(a,fr.length?fr[fr.length-1].t+0.005:0),b,null,{x:(best.x0+best.x1)/2,y:best.y0+(best.y1-best.y0)*0.55,h:best.y1-best.y0});
           if(!part)return false;fr.push(...part)}
+        if(window.__ballDbg)window.__ssFr={W,H,frames:fr.map(f=>({t:f.t,P:f.P&&f.P.map(p=>[+p.x.toFixed(4),+p.y.toFixed(4),+(p.v||0).toFixed(2)])}))};// test dump
         res.split=splitSteps(fr,W,H,opp).map(s=>({...s,t:+s.t.toFixed(3)}))}}
   }else{
     const path=pickBallTrack(tracks,tc);
@@ -2589,6 +2624,7 @@ $('#bRally').onclick=async()=>{if(!hasVideo()){toast('Open eerst een video');ret
 $('#bBall').onclick=async()=>{
   const list=visibleClips();if(!list.length){toast('Nog geen clips');return}
   try{await loadPose()}catch(e){toast('Skeletmodel niet geladen: spelers worden niet uitgesloten',4000)}
+  await ensureFps();
   if(ballDetMode()==='nn'&&!BNN.sess){$('#ballDetInfo').textContent='AI-balmodel laden…';
     try{await ballNNLoad();$('#ballDetInfo').textContent='(draait op '+(BNN.ep==='webgpu'?'de videokaart':'de processor, trager')+')'}
     catch(e){console.warn(e);$('#ballDetInfo').textContent='';toast('AI-balmodel niet geladen; de bal wordt gevolgd met de oude methode',5000)}}
