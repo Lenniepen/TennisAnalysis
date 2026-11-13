@@ -211,7 +211,7 @@ details.info{margin-top:10px}details.info summary{cursor:pointer;color:var(--mut
   </nav>
 
   <div class="panel on" data-panel="clips">
-    <div class="rowf" style="margin-bottom:6px;flex-wrap:wrap"><button class="btn" id="bRally" style="flex:1" title="Zoekt in de hele video waar de bal heen en weer gaat (ook zonder service, ook als je doorspeelt na een uitbal) en maakt daar rally-clips van. Kalibreer eerst de baan.">Rally’s zoeken</button><label class="mini" title="Minimaal aantal keer dat de bal over het net gaat">min. slagen <input id="rMin" type="number" min="2" max="30" value="3" style="width:44px"></label><label class="mini" title="Afspeelsnelheid tijdens het zoeken: sneller is eerder klaar, maar minder beelden per seconde">tempo <select id="rRate"><option value="1">1×</option><option value="2" selected>2×</option><option value="3">3×</option></select></label></div>
+    <div class="rowf" style="margin-bottom:6px;flex-wrap:wrap"><button class="btn" id="bRally" style="flex:1" title="Zoekt in de hele video waar de bal heen en weer gaat (ook zonder service, ook als je doorspeelt na een uitbal) en maakt daar rally-clips van. Kalibreer eerst de baan.">Rally’s zoeken</button><label class="mini" title="Minimaal aantal keer dat de bal over het net gaat">min. slagen <input id="rMin" type="number" min="2" max="30" value="3" style="width:44px"></label><label class="mini" title="Afspeelsnelheid tijdens het zoeken: sneller is eerder klaar, maar minder beelden per seconde">tempo <select id="rRate"><option value="auto" selected>auto</option><option value="1">1×</option><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option></select></label></div>
     <div class="chips" id="chips"></div>
     <ol id="list"></ol>
   </div>
@@ -2603,7 +2603,17 @@ const ballBounces=b=>b?(b.bounces||(b.bounce?[b.bounce]:[])):[];
 async function scanRallies(prog){
   const ch=courtH();if(!ch||!ch.toImg)throw new Error('Kalibreer eerst de baan (Bal-tabblad: “Baan automatisch”)');
   const W=v.videoWidth,H=v.videoHeight,r=ballROI(),scale=Math.min(1,640/r.w),space=ballSpace((X,Y)=>applyH(ch.toImg,X,Y),W,H);
-  const rate=+$('#rRate').value||2,frames=[],ring=[];let lastT=-1;
+  // tempo "auto": start at 2x and speed up while every frame still arrives, slow down when frames are dropped
+  // (checked every second of wall time on the frames that came in: their spacing against the video's frame step)
+  const auto=$('#rRate').value==='auto';if(auto)await ensureFps();
+  let rate=auto?2:(+$('#rRate').value||2);const frames=[],ring=[];let lastT=-1;
+  // strict: a dropped frame cuts a ball track and splits a rally, so speed up only when every frame came in, and after
+  // slowing down wait 4 s before trying faster again
+  const fstep=1/anaFps(),AR={t:performance.now(),m0:null,n:0,rates:[],hold:0};
+  const tune=t=>{if(!auto)return;const now=performance.now();if(AR.m0==null){AR.m0=t;AR.n=0;AR.t=now;return}AR.n++;if(now-AR.t<1000)return;
+    const exp=(t-AR.m0)/fstep,got=AR.n/Math.max(1,exp);
+    if(got<0.97&&rate>1){rate=Math.max(1,rate/1.5);AR.hold=now+4000}else if(got>=0.99&&rate<16&&now>AR.hold)rate=Math.min(16,rate*1.25);
+    v.playbackRate=rate;AR.rates.push(+rate.toFixed(2));AR.m0=t;AR.n=0;AR.t=now};
   const wasMuted=v.muted;await seek(0);v.muted=true;v.playbackRate=rate;
   await new Promise((res,rej)=>{let done=false;const rv='requestVideoFrameCallback' in HTMLVideoElement.prototype;
     const fin=()=>{if(done)return;done=true;clearInterval(wd);v.pause();res()};
@@ -2611,13 +2621,14 @@ async function scanRallies(prog){
       if(state.cancel||v.ended||t>=v.duration-0.05){fin();return}
       if(t>lastT+0.005){lastT=t;ring.push({t,g:grabFrame(r,scale)});
         if(ring.length>=5){const k=ring.length-3,bb=blobsFrom(ring[k-1].g,ring[k].g,ring[k+1].g,r,scale,W,H,space,false,ring[k-2].g,ring[k+2].g);frames.push({t:ring[k].t,c:bb.s.map(c=>({x:c.x,y:c.y}))})}
-        if(ring.length>5)ring.shift();prog(t/v.duration)}
+        if(ring.length>5)ring.shift();tune(t);prog(t/v.duration)}
       if(rv)v.requestVideoFrameCallback(step);else requestAnimationFrame(()=>step(0,null))};
     const wd=setInterval(()=>{if(state.cancel||v.ended)fin()},200);
     if(rv)v.requestVideoFrameCallback(step);else requestAnimationFrame(()=>step(0,null));v.play().catch(e=>{clearInterval(wd);rej(e)})});
   v.muted=wasMuted;if(state.cancel)return null;
   const tracks=rallyTracks(frames,W,H),segs=rallySegments(tracks,{minShots:Math.max(2,+$('#rMin').value||3)});
-  if(window.__rallyDbg)window.__rallyDbg={frames:frames.length,tracks:tracks.length,segs};
+  if(window.__rallyDbg)window.__rallyDbg={frames:frames.length,tracks:tracks.length,segs,rates:AR.rates};
+  v.playbackRate=1;
   return segs}
 $('#bRally').onclick=async()=>{if(!hasVideo()){toast('Open eerst een video');return}
   const segs=await runExport('Rally’s zoeken in de video',scanRallies);if(!segs)return;

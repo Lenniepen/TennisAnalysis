@@ -25,7 +25,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   await ev(`document.querySelector('#rRate').value='${rate}';document.querySelector('#rMin').value='${minShots}';window.__rallyDbg=true;1`);
   const t0=Date.now();await ev("document.querySelector('#bRally').click();1");
   for(let i=0;i<2400;i++){await sleep(500);const t=await toast();if(/rally’s toegevoegd|Geen rally|mislukt|geannuleerd/.test(t)){console.log('na',((Date.now()-t0)/1000).toFixed(0)+'s:',t);break}}
-  console.log('debug:',JSON.stringify(await ev("(()=>{const d=window.__rallyDbg;return d===true?null:{frames:d.frames,tracks:d.tracks}})()")));
+  console.log('debug:',JSON.stringify(await ev("(()=>{const d=window.__rallyDbg;return d===true?null:{frames:d.frames,tracks:d.tracks,rates:(d.rates||[]).join(' ')}})()")));
   const clips=await ev(`(()=>{const k=Object.keys(localStorage).find(k=>k.startsWith('tcp:clips:'));if(!k)return null;return JSON.parse(localStorage.getItem(k)).clips.map(c=>c.t0.toFixed(1)+'-'+c.t1.toFixed(1)+' ('+c.shots+')')})()`);
   console.log('rally-clips:',JSON.stringify(clips));
   console.log(logs.slice(0,10).join('\n')||'geen fouten in console');
