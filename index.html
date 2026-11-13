@@ -248,7 +248,10 @@ details.info{margin-top:10px}details.info summary{cursor:pointer;color:var(--mut
       <label class="mini"><input type="checkbox" id="showCourt" checked> Lijnen tonen</label>
     </div>
     <div id="calInfo" class="note"></div>
-    <button class="btn pri" id="bBall" style="width:100%">Bal volgen in clips</button>
+    <div style="display:flex;gap:6px">
+      <button class="btn pri" id="bBallSel" style="flex:2;min-width:0" title="Volg de bal alleen in de clip die je hebt geselecteerd (klik een clip in de lijst of tijdlijn)">Bal volgen: kies eerst een clip</button>
+      <button class="btn" id="bBall" style="flex:1;min-width:0" title="Volg de bal in alle clips die in de lijst staan (met het filter, als dat aan staat)">Alle clips</button>
+    </div>
     <div class="note" style="margin-top:4px">Balherkenning <select id="ballDet" title="AI-model: getraind tennismodel (WASB), ziet ook de opgooi en de bal bij het racket; draait lokaal in de browser (5 MB, plus ca. 20 MB rekenbibliotheek de eerste keer). Beweging: de oude, snellere methode zonder model."><option value="nn">AI-model (aanbevolen)</option><option value="motion">Beweging (oud, sneller)</option></select> <span id="ballDetInfo"></span></div>
     <canvas id="courtMap" style="width:100%;margin-top:8px;border-radius:8px;display:block"></canvas>
     <div id="ballTable"></div>
@@ -626,6 +629,10 @@ function render(){renderTimeline();renderChips();renderList();renderCrop();rende
   $('#bMontage').textContent='Montage als één video'+(n?' — '+n+' clips'+f:'');
   $('#bZip').textContent='Alle clips los (zip)'+(n?' — '+n+f:'');
   ['bMontage','bZip','bFfmpeg','bSaveJson'].forEach(id=>$('#'+id).disabled=!n);
+  // ball tracking: the selected clip, or all clips in the list
+  const sc=getClip(state.sel),bs=$('#bBallSel'),ba=$('#bBall');
+  if(bs){bs.disabled=!sc;bs.textContent=sc?'Bal volgen: '+LABELS[sc.label].name+' '+numberOf(sc)+(sc.ball?' (opnieuw)':''):'Bal volgen: kies eerst een clip'}
+  if(ba){ba.disabled=!n;ba.textContent='Alle clips'+(n?' ('+n+')':'')}
 }
 
 $('#list').addEventListener('click',e=>{
@@ -2621,17 +2628,20 @@ $('#bRally').onclick=async()=>{if(!hasVideo()){toast('Open eerst een video');ret
   sortClips();persist();render();
   toast(segs.length?n+' rally’s toegevoegd'+(segs.length>n?' ('+(segs.length-n)+' bestonden al)':'')+'. Te veel of te weinig? Pas “min. slagen” aan en zoek opnieuw; overbodige clips verwijder je in de lijst.':'Geen rally’s gevonden. Klopt de baankalibratie?',7000)};
 
-$('#bBall').onclick=async()=>{
-  const list=visibleClips();if(!list.length){toast('Nog geen clips');return}
+$('#bBall').onclick=()=>runBall(visibleClips());
+$('#bBallSel').onclick=()=>{const c=getClip(state.sel);if(!c){toast('Selecteer eerst een clip in de lijst of op de tijdlijn');return}runBall([c])};
+async function runBall(list){
+  if(!list.length){toast('Nog geen clips');return}
   try{await loadPose()}catch(e){toast('Skeletmodel niet geladen: spelers worden niet uitgesloten',4000)}
   await ensureFps();
   if(ballDetMode()==='nn'&&!BNN.sess){$('#ballDetInfo').textContent='AI-balmodel laden…';
     try{await ballNNLoad();$('#ballDetInfo').textContent='(draait op '+(BNN.ep==='webgpu'?'de videokaart':'de processor, trager')+')'}
     catch(e){console.warn(e);$('#ballDetInfo').textContent='';toast('AI-balmodel niet geladen; de bal wordt gevolgd met de oude methode',5000)}}
-  const r=await runExport('Bal volgen in '+list.length+' clips',async prog=>{for(let i=0;i<list.length;i++){const ok=await analyzeBall(list[i],p=>prog((i+p)/list.length));if(!ok)return null;persist()}return true});
+  const one=list.length===1?LABELS[list[0].label].name+' '+numberOf(list[0]):null;
+  const r=await runExport(one?'Bal volgen in '+one:'Bal volgen in '+list.length+' clips',async prog=>{for(let i=0;i<list.length;i++){const ok=await analyzeBall(list[i],p=>prog((i+p)/list.length));if(!ok)return null;persist()}return true});
   persist();render();
-  if(r){const n=list.filter(c=>ballBounces(c.ball).length).length;toast('Bal gevolgd: stuitpunt(en) gevonden in '+n+' van '+list.length+' clips',5000)}
-};
+  if(r){const n=list.filter(c=>ballBounces(c.ball).length).length;toast(one?'Bal gevolgd in '+one+(n?'':': geen stuitpunt gevonden'):'Bal gevolgd: stuitpunt(en) gevonden in '+n+' van '+list.length+' clips',5000)}
+}
 
 // --- court map + table ---
 function drawCourtMap(cv,list,big){
